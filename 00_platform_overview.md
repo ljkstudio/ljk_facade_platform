@@ -350,6 +350,14 @@ Claude / ChatGPT / 자체 에이전트
 | 12 | `12_dashboard_v1.md` (REST 클라이언트) | 대기 |
 | 13 | `13_api_ai_assistant.md` (Claude/ChatGPT wrapper) | 대기 |
 
+### 네이티브 플러그인 트랙
+
+| # | 파일명 | 상태 |
+|---|---|---|
+| 20 | `20_gha_csharp_port.md` (adaptive_mold A~D → C# `.gha`) | 진행 |
+
+§2.1의 "어댑터만 교체"를 실행하는 트랙. `Core`는 RhinoCommon만 참조하고 Grasshopper를 참조하지 않는다.
+
 각 지시서는 본 마스터 문서의 원칙을 따른다.
 
 ### 작업 우선순위 (현재)
