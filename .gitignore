@@ -1,5 +1,6 @@
 # Python
 __pycache__/
+.pytest_cache/
 *.py[cod]
 *$py.class
 *.pyo
@@ -37,3 +38,8 @@ Desktop.ini
 *.log
 *.tmp
 *.temp
+
+# Node / Dashboard
+node_modules/
+dashboard/dist/
+dashboard/tsconfig.tsbuildinfo
