@@ -1,0 +1,197 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+:root {
+  color-scheme: dark;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  background: #0f1419;
+  color: #e7ecf3;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  background: #151b24;
+  border-right: 1px solid #243041;
+  padding: 1rem;
+}
+
+.sidebar h1 {
+  font-size: 1rem;
+  margin: 0 0 1rem;
+  color: #8ab4ff;
+}
+
+.nav-btn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  color: #c5d0de;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-bottom: 0.35rem;
+}
+
+.nav-btn.active,
+.nav-btn:hover {
+  background: #1e2733;
+  border-color: #334155;
+}
+
+.main {
+  padding: 1.25rem 1.5rem;
+}
+
+.card {
+  background: #151b24;
+  border: 1px solid #243041;
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.card h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 1rem;
+}
+
+.field {
+  margin-bottom: 0.75rem;
+}
+
+.field label {
+  display: block;
+  font-size: 0.8rem;
+  color: #94a3b8;
+  margin-bottom: 0.25rem;
+}
+
+.field input {
+  width: 100%;
+  background: #0f1419;
+  border: 1px solid #334155;
+  color: #e7ecf3;
+  border-radius: 6px;
+  padding: 0.45rem 0.6rem;
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+}
+
+.btn {
+  border: none;
+  border-radius: 8px;
+  padding: 0.55rem 0.9rem;
+  cursor: pointer;
+}
+
+.btn-primary {
+  background: #3b82f6;
+  color: white;
+}
+
+.btn-secondary {
+  background: #334155;
+  color: #e7ecf3;
+}
+
+.status-bar {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: #1e2733;
+  border: 1px solid #334155;
+}
+
+.chip.ok {
+  border-color: #22c55e;
+  color: #86efac;
+}
+
+.chip.warn {
+  border-color: #f59e0b;
+  color: #fcd34d;
+}
+
+.chip.error {
+  border-color: #ef4444;
+  color: #fca5a5;
+}
+
+.viewer-wrap {
+  height: 420px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid #243041;
+  background: #0b0f14;
+}
+
+.report-pre {
+  white-space: pre-wrap;
+  font-family: Consolas, monospace;
+  font-size: 0.82rem;
+  color: #cbd5e1;
+  margin: 0;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.table th,
+.table td {
+  border-bottom: 1px solid #243041;
+  padding: 0.55rem 0.4rem;
+  text-align: left;
+}
+
+.table th {
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.error-text {
+  color: #fca5a5;
+  font-size: 0.85rem;
+}
