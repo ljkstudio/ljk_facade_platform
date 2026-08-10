@@ -34,7 +34,9 @@ Inputs:
 import Rhino.Geometry as rg
 
 from grid import build_grid
-from optimization import optimize_surface
+from optimization import (
+    optimize_surface, ROTATION_MODE_CURRENT, ROTATION_MODE_NORMALIZED
+)
 from extension import extend_surface, EXTENSION_METHOD_TANGENT
 from projection import calculate_heights
 from transformation import transform_models
@@ -69,7 +71,8 @@ def run_adaptive_mold(target_srf, base_plane=None,
                       max_height=400.0, min_height=0.0,
                       housing_model=None, rod_model=None, top_model=None,
                       rod_base_length=None,
-                      compute=True, component=None):
+                      compute=True, component=None,
+                      rotation_mode=ROTATION_MODE_CURRENT):
     # type: (...) -> AdaptiveMoldResult
     """AdaptiveMold v1 전체 파이프라인을 실행합니다.
 
@@ -136,7 +139,8 @@ def run_adaptive_mold(target_srf, base_plane=None,
     # --- Phase B: Surface Optimization ---
     positioned_srf, opt_info = optimize_surface(
         target_brep, grid_pts, base_plane, width, length,
-        min_height, max_height, component
+        min_height, max_height, component,
+        rotation_mode=rotation_mode
     )
 
     if positioned_srf is None:

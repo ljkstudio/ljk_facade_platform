@@ -14,8 +14,24 @@ from utils import (
 )
 
 
+# ──────────────────────────────────────
+# 회전 방식 (Phase B 결정 대기 중 — 확정되면 하나만 남긴다)
+#
+# CURRENT    : 기존 구현. fit 법선을 그대로 쓰고 -rot_angle 적용.
+#              진단 결과 기울기를 없애는 대신 2배로 키운다.
+#              (입력 5/10/20도 → 잔여 10/20/40도, 오차 없음)
+# NORMALIZED : fit 법선을 +Z 반구로 뒤집은 뒤 +rot_angle 적용.
+#              FitPlaneToPoints는 법선 방향을 보장하지 않으므로,
+#              부호만 뒤집는 수정은 법선이 -Z로 나올 때만 우연히 맞는다.
+# ──────────────────────────────────────
+
+ROTATION_MODE_CURRENT = "current"
+ROTATION_MODE_NORMALIZED = "normalized"
+
+
 def optimize_surface(target_srf, grid_pts, base_plane, width, length,
-                     min_height, max_height, component=None):
+                     min_height, max_height, component=None,
+                     rotation_mode=ROTATION_MODE_CURRENT):
     # type: (...) -> tuple[rg.Brep | None, str]
     """목표 곡면을 stroke 범위 안에 맞도록 최적 위치로 정렬합니다.
 
@@ -90,6 +106,12 @@ def optimize_surface(target_srf, grid_pts, base_plane, width, length,
     current_normal = fit_plane.Normal
     target_normal = rg.Vector3d.ZAxis
 
+    # FitPlaneToPoints는 법선 방향(부호)을 보장하지 않는다. 정규화하면
+    # rot_angle이 (180 - 기울기)가 아니라 실제 기울기로 나온다.
+    if rotation_mode == ROTATION_MODE_NORMALIZED:
+        if (current_normal * target_normal) < 0:
+            current_normal = -current_normal
+
     rot_axis = rg.Vector3d.CrossProduct(current_normal, target_normal)
     rot_axis_len = rot_axis.Length
 
@@ -110,7 +132,10 @@ def optimize_surface(target_srf, grid_pts, base_plane, width, length,
         )
         rot_axis_world.Unitize()
 
-        rot_xform = rg.Transform.Rotation(-rot_angle, rot_axis_world, pivot)
+        # 벡터 a를 b로 돌리려면 축 (a x b) 둘레로 +각도만큼 돌려야 한다.
+        angle_signed = (rot_angle if rotation_mode == ROTATION_MODE_NORMALIZED
+                        else -rot_angle)
+        rot_xform = rg.Transform.Rotation(angle_signed, rot_axis_world, pivot)
         positioned.Transform(rot_xform)
 
     # 회전 후 재측정 → Z 평행이동

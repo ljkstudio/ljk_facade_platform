@@ -6,6 +6,7 @@ GhPython 컴포넌트용 **RunScript 파일**은 `gh_scripts/` 폴더에 있습�
 |---|---|
 | `gh_scripts/AMv1_Bridge.py` | 대시보드 파라미터 pull |
 | `gh_scripts/AdaptiveMold_v1.py` | AdaptiveMold 계산 + sync |
+| `gh_scripts/AMv1_Inspect.py` | **몰드 시각화 — 핀·데크·이탈량을 보며 판단** |
 
 ## 공통: platform_path 입력
 
