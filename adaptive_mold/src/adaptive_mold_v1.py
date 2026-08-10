@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """AdaptiveMold v1 — GhPython 컴포넌트 진입점.
 
 입력 곡면을 액추에이터 stroke 범위 안에 들도록 최적 위치로 정렬한 뒤,

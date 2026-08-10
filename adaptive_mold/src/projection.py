@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Phase D: Height Calculation & Clamping 모듈.
 
 모든 grid_pt에서 extended_srf(또는 positioned_srf)로 투영하여

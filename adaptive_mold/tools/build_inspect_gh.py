@@ -20,6 +20,19 @@ import Grasshopper as gh
 import Grasshopper.Kernel as ghk
 import Grasshopper.Kernel.Special as ghs
 
+import System
+import System.Drawing
+
+
+def _pt(x, y):
+    """GH 캔버스 좌표. Attributes.Pivot은 Rhino의 Point2d가 아니라
+    System.Drawing.PointF를 받는다."""
+    return System.Drawing.PointF(float(x), float(y))
+
+
+def _dec(v):
+    return System.Decimal(float(v))
+
 try:
     HERE = os.path.dirname(os.path.abspath(__file__))
 except NameError:
@@ -113,12 +126,15 @@ def configure_params(comp):
 def add_slider(doc, x, y, lo, hi, val, digits, nick):
     s = ghs.GH_NumberSlider()
     s.CreateAttributes()
-    s.Slider.Minimum = System.Decimal(lo)
-    s.Slider.Maximum = System.Decimal(hi)
     s.Slider.DecimalPlaces = int(digits)
-    s.SetSliderValue(System.Decimal(val))
+    s.Slider.Minimum = _dec(lo)
+    s.Slider.Maximum = _dec(hi)
+    try:
+        s.SetSliderValue(_dec(val))
+    except Exception:
+        s.Slider.Value = _dec(val)
     s.NickName = nick
-    s.Attributes.Pivot = Rhino.Geometry.Point2d(x, y)
+    s.Attributes.Pivot = _pt(x, y)
     doc.AddObject(s, False)
     return s
 
@@ -128,33 +144,22 @@ def add_toggle(doc, x, y, value, nick):
     t.CreateAttributes()
     t.Value = bool(value)
     t.NickName = nick
-    t.Attributes.Pivot = Rhino.Geometry.Point2d(x, y)
+    t.Attributes.Pivot = _pt(x, y)
     doc.AddObject(t, False)
     return t
 
 
-def add_panel(doc, x, y, text, nick, width=340, height=26):
+def add_panel(doc, x, y, text, nick):
     p = ghs.GH_Panel()
     p.CreateAttributes()
     p.UserText = str(text)
     p.NickName = nick
-    p.Attributes.Pivot = Rhino.Geometry.Point2d(x, y)
-    try:
-        p.Attributes.Bounds = Rhino.Geometry.Rectangle3d()
-    except Exception:
-        pass
+    p.Attributes.Pivot = _pt(x, y)
     doc.AddObject(p, False)
-    try:
-        p.Properties.Colour = p.Properties.Colour
-    except Exception:
-        pass
     return p
 
 
 def main():
-    import System  # noqa: F401  (add_slider에서 사용)
-    globals()["System"] = System
-
     if not os.path.isfile(SCRIPT_SRC):
         raise RuntimeError("스크립트 원본이 없습니다: {}".format(SCRIPT_SRC))
 
@@ -163,15 +168,15 @@ def main():
 
     log("원본 코드: {} ({} 자)".format(SCRIPT_SRC, len(code)))
 
+    # GH_Document.DisplayName은 읽기 전용 — 파일명에서 파생된다.
     doc = ghk.GH_Document()
-    doc.DisplayName = "AMv1_Inspect"
 
     comp, kind = make_python_component(code)
     log("컴포넌트: {}".format(kind))
 
     comp.CreateAttributes()
     comp.NickName = "AMv1 Inspect"
-    comp.Attributes.Pivot = Rhino.Geometry.Point2d(520, 240)
+    comp.Attributes.Pivot = _pt(520, 240)
     configure_params(comp)
     doc.AddObject(comp, False)
 
@@ -194,7 +199,7 @@ def main():
         y += 44
 
     # info 출력용 패널
-    info_panel = add_panel(doc, 800, 240, "", "info", width=420, height=280)
+    info_panel = add_panel(doc, 800, 240, "", "info")
     for i, oname in enumerate(OUTPUTS):
         if oname == "info":
             info_panel.AddSource(comp.Params.Output[i])

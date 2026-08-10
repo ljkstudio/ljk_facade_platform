@@ -1,0 +1,6 @@
+원본 코드: C:\Users\leeja\Documents\dev\26_AdaptiveMold_development\gh_components\gh_scripts\AMv1_Inspect.py (6187 자)
+컴포넌트: GhPython.ZuiPythonComponent
+저장 성공: C:\Users\leeja\Documents\dev\26_AdaptiveMold_development\adaptive_mold\grasshopper\AMv1_Inspect.gh
+
+입력 11개 / 출력 10개
+target_srf 와 base_plane 만 직접 연결하시면 됩니다.

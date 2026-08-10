@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Phase E: 3D Model Transformation 모듈.
 
 사용자가 제공한 housing/rod/top 모델을 각 그리드 포인트에 배치합니다.

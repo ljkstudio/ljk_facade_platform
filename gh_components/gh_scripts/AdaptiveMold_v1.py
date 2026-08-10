@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 AdaptiveMold v1 — GhPython RunScript
 ====================================

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # AMv1 Inspect — 몰드를 눈으로 보고 판단하기 위한 GhPython 컴포넌트
 #
 # 목적:

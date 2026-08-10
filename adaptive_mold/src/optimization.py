@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Phase B: Surface Optimization (회전 + 평행이동) 모듈.
 
 grid_pt들에서 곡면까지의 수직거리를 측정 → best-fit plane →

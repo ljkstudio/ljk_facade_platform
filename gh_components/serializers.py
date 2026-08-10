@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """AdaptiveMold v1 결과를 REST JSON payload로 변환."""
 
 from __future__ import annotations

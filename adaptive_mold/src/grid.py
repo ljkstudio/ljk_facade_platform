@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Phase A: 베이스 그리드 생성 모듈.
 
 width/length/spacing으로 nx×ny 직교 그리드를 생성합니다.

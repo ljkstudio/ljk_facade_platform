@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """AMv1 Bridge — GH ↔ Dashboard 통신 전용 컴포넌트.
 
 대시보드에서 변경된 파라미터를 pull하고, compute 요청 상태를 확인합니다.

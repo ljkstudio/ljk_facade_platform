@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Phase C: Surface Edge Extension 모듈.
 
 positioned_srf를 mold 전체 영역으로 확장합니다.

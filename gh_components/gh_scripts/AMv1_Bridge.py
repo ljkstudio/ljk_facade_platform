@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 AMv1 Bridge — GhPython RunScript
 ================================

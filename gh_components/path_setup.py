@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Grasshopper 컴포넌트에서 platform_path로 sys.path를 설정합니다."""
 
 from __future__ import annotations

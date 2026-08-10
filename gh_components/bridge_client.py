@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """REST API client for GH ↔ Dashboard communication (stdlib only)."""
 
 from __future__ import annotations
