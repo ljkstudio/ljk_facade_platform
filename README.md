@@ -122,5 +122,6 @@ run_all()
 | [`10_api_rest_server.md`](10_api_rest_server.md) · [`11_api_schemas.md`](11_api_schemas.md) | REST 백본 |
 | [`12_dashboard_v1.md`](12_dashboard_v1.md) | 대시보드 |
 | [`20_gha_csharp_port.md`](20_gha_csharp_port.md) | **C# `.gha` 플러그인 포팅 계획** |
+| [`docs/journal/README.md`](docs/journal/README.md) | 개발 저널 기록 규약 — 다음 개발을 자동 생성하기 위한 재료 |
 | [`adaptive_mold/README.md`](adaptive_mold/README.md) | 역산기 입출력 사양 |
 | [`gh_components/README.md`](gh_components/README.md) | GH 컴포넌트 설치·배선 |
