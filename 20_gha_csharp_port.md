@@ -48,17 +48,45 @@ Phase E(housing/rod/top 배치)는 **당분간 GhPython에 남겨둡니다.** Br
 
 | 항목 | 값 |
 |---|---|
-| Rhino 8 | 8.32.26160.13001 |
+| Rhino 8 | **8.33.26188.13001** (2026-08-11 측정. 전날 8.32였음 — **자동 업데이트로 세션 사이에 바뀜**) |
 | .NET 플레이버 | `System\netcore\RhinoCommon.dll` 존재 → **netcore 경로 사용** |
 | 타겟 프레임워크 | **`net7.0-windows`** |
-| .NET 런타임 | 7.0.0 설치됨 (Rhino 8이 설치) |
+| 호스트 런타임 | **.NET 8.0.14** — Rhino 8.33이 켠 런타임. §3.1 참조 |
 | .NET SDK | **9.0.201 하나뿐** |
 | Visual Studio | 2022 Community |
 | `Rhino.Templates` | **미설치** → `dotnet new install Rhino.Templates` |
 
+### 3.1 타겟 TFM ≠ 실행 런타임 (M0 실측)
+
+`net7.0-windows`로 빌드한 `.gha`가 **.NET 8.0.14에서 실행됩니다.** 정상입니다.
+
+플러그인은 자기 런타임을 시작하지 않습니다. `Rhino.exe /netcore`가 이미 띄워놓은 호스트 런타임에 어셈블리가 얹히므로, `RuntimeInformation.FrameworkDescription`은 우리 TFM이 아니라 **Rhino가 켠 런타임**을 보고합니다. `.gha`의 `runtimeconfig.json`(`tfm: net7.0`, `rollForward: LatestMinor`)은 이 상황에서 결정권이 없습니다.
+
+**그래서 `net7.0`이 `net8.0`보다 안전합니다:**
+
+| 타겟 | Rhino 8.33 (.NET 8 호스트) | 구형 Rhino 8 (.NET 7 호스트) |
+|---|---|---|
+| **`net7.0`** | 로드됨 (확인) | 로드됨 |
+| `net8.0` | 로드됨 | **깨짐** |
+
+> **로드 경로 확인법:** 컴포넌트가 `.NET 8.x`처럼 보고하면 netcore, `.NET Framework 4.8.x`면 netfx입니다. 의도한 경로로 로드됐는지 확인하는 가장 빠른 방법.
+
+---
+
 **어셈블리 참조는 NuGet(`RhinoCommon`, `Grasshopper`)으로 합니다.** `C:\Program Files\Rhino 8\...`의 DLL을 직접 파일 참조하지 않습니다 — 절대경로가 프로젝트에 박히면 다른 PC·다른 Rhino 버전에서 그대로 깨집니다. 지금 GhPython이 `sys.path.insert`로 앓고 있는 것과 같은 병입니다.
 
-**개발 루프:** Rhino의 `GrasshopperDeveloperSettings` 명령으로 빌드 출력 폴더를 등록하면 GH가 그 폴더의 `.gha`를 직접 읽습니다. 파일 복사 절차가 없고, VS에서 F5로 Rhino를 띄우면 중단점이 걸립니다.
+**개발 루프 (M0 실측으로 정정):** `Rhino.Templates`가 만드는 `Properties/launchSettings.json`이 이 방식을 씁니다 — **`GrasshopperDeveloperSettings` 명령이 아닙니다.**
+
+```jsonc
+"Rhino 8 - netcore": {
+  "commandName": "Executable",
+  "executablePath": "C:\\Program Files\\Rhino 8\\System\\Rhino.exe",
+  "commandLineArgs": "/netcore /runscript=\"_Grasshopper\"",
+  "environmentVariables": { "RHINO_PACKAGE_DIRS": "$(ProjectDir)$(OutputPath)\\" }
+}
+```
+
+환경변수 `RHINO_PACKAGE_DIRS`가 빌드 출력 폴더를 가리키고, `/netcore`로 .NET Core 호스트를 강제하며, `/runscript`로 Grasshopper를 자동으로 엽니다. 파일 복사 절차가 없고 VS에서 F5로 중단점이 걸립니다. 프로필이 `netcore`/`netfx` 두 개 생기므로 **`net7.0-windows`를 디버깅할 때는 `Rhino 8 - netcore`를 골라야 합니다.**
 
 ---
 
@@ -131,10 +159,13 @@ RayShoot(+법선) → 실패 시 RayShoot(-법선)
 
 **진짜 확인할 질문: SDK 9.0.201로 `net7.0`이 빌드되는가.** 참조 팩 복원이 매끄러운지 실측되지 않았습니다. 막히면 .NET 7 SDK 추가 설치 또는 `net7.0;net48` 멀티타겟으로 대응합니다. **환경이 안 되는 걸 나중에 발견하는 것이 가장 비싸므로 이것이 첫 관문입니다.**
 
-- [ ] `dotnet new install Rhino.Templates`
-- [ ] 템플릿으로 GH 플러그인 생성 → `dotnet build` 성공
-- [ ] `GrasshopperDeveloperSettings`에 출력 폴더 등록 → GH 캔버스에 컴포넌트 등장
-- [ ] VS에서 F5 → Rhino 기동 → 중단점 정지 확인
+- [x] `dotnet new install Rhino.Templates` → **8.16.2 설치됨**
+- [x] 템플릿으로 GH 플러그인 생성 → `dotnet build` 성공 → **경고 0 · 오류 0 · 4.11초**
+- [x] **리스크 1 해소 — SDK 9.0.201로 `net7.0` 빌드됨.** 참조 팩 복원 1초, 추가 SDK 불필요
+- [x] Rhino 8 `/netcore` 기동 → GH 캔버스에 컴포넌트 등장 → **`OK | .NET 8.0.14 | Rhino 8.33.26188.13001`**
+- [x] VS에서 F5 → 중단점 정지 확인 (프로필 `Rhino 8 - netcore`, 실행문에 중단점)
+
+**M0 완료 (2026-08-11).** 저널: [`docs/journal/J-001-M0-toolchain.md`](docs/journal/J-001-M0-toolchain.md)
 
 ### M1 — 골든 픽스처 추출
 
@@ -192,7 +223,7 @@ plugin/                          # ★ 신규 — C# 전용 최상위
 
 | # | 리스크 | 대응 |
 |---|---|---|
-| 1 | SDK 9로 `net7.0` 빌드 실패 | M0에서 먼저 확인. .NET 7 SDK 설치 또는 멀티타겟 |
+| 1 | ~~SDK 9로 `net7.0` 빌드 실패~~ | **해소 (M0, 2026-08-11)** — 경고 0·오류 0으로 빌드됨 |
 | 2 | **`RayShoot` 오버로드 불일치** — 아래 참조 | M2에서 실측 확인 후 보고 |
 | 3 | 기하 연산 부동소수 차이로 픽스처 불일치 | 허용오차 조정. 단 **플래그·가지는 예외 없음** |
 | 4 | GhPython과 `.gha`가 같은 GH에서 이름 충돌 | 컴포넌트 이름·GUID를 다르게 (`AdaptiveMold Pins`) |
