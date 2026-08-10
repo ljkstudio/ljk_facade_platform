@@ -162,18 +162,25 @@ def _measure_distances(grid_pts, base_plane, brep):
 
 def _ray_cast_distance(pt, direction, brep):
     # type: (rg.Point3d, rg.Vector3d, rg.Brep) -> float | None
-    """양방향 ray-cast로 Brep과의 교점 거리를 계산합니다."""
+    """양방향 ray-cast로 Brep과의 교점 거리를 계산합니다.
+
+    Note:
+        `Intersection.RayShoot(Ray3d, IEnumerable<GeometryBase>, int)`는
+        **교점 Point3d 배열**을 반환한다. 곡선 파라미터가 아니다.
+        이전 구현은 반환값을 `Ray3d.PointAt(double)`에 넘겨
+        레이가 곡면에 맞는 즉시 TypeError로 죽었다.
+        사양서 01_core_geometry_adaptive_mold_v1.md §ray_to_brep_distance가
+        처음부터 올바른 형태를 명시하고 있었다.
+    """
     ray_pos = rg.Ray3d(pt, direction)
-    t_pos = rgi.Intersection.RayShoot(ray_pos, [brep], 1)
-    if t_pos is not None and len(t_pos) > 0:
-        hit_pt = ray_pos.PointAt(t_pos[0])
-        return pt.DistanceTo(hit_pt)
+    hits_pos = rgi.Intersection.RayShoot(ray_pos, [brep], 1)
+    if hits_pos is not None and len(hits_pos) > 0:
+        return pt.DistanceTo(hits_pos[0])
 
     ray_neg = rg.Ray3d(pt, -direction)
-    t_neg = rgi.Intersection.RayShoot(ray_neg, [brep], 1)
-    if t_neg is not None and len(t_neg) > 0:
-        hit_pt = ray_neg.PointAt(t_neg[0])
-        return pt.DistanceTo(hit_pt)
+    hits_neg = rgi.Intersection.RayShoot(ray_neg, [brep], 1)
+    if hits_neg is not None and len(hits_neg) > 0:
+        return pt.DistanceTo(hits_neg[0])
 
     return None
 

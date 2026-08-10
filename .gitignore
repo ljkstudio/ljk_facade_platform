@@ -34,6 +34,9 @@ Desktop.ini
 *.3dmbak
 *.ghc
 
+# 픽스처 생성 로그 (매 실행 재생성 — 내용은 docs/journal에 기록)
+plugin/fixtures/_dump_log.txt
+
 # Logs / temp
 *.log
 *.tmp

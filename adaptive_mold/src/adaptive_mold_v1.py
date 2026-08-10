@@ -59,6 +59,9 @@ class AdaptiveMoldResult(object):
         self.clamp_flags = []
         self.extension_flags = []
         self.info = ""
+        # 핀별로 탄 폴백 가지 (projection.BRANCH_*). 골든 픽스처 대조용 진단이며
+        # ghpython_run의 반환 튜플에는 포함되지 않는다.
+        self.branch_taken = []
 
 
 def run_adaptive_mold(target_srf, base_plane=None,
@@ -152,7 +155,8 @@ def run_adaptive_mold(target_srf, base_plane=None,
     # --- Phase D: Height Calculation ---
     pin_heights, clamp_flags, extension_flags = calculate_heights(
         grid_pts, positioned_srf, extended_srf, base_plane,
-        min_height, max_height, ext_method
+        min_height, max_height, ext_method,
+        branch_out=result.branch_taken
     )
 
     result.pin_heights = pin_heights
