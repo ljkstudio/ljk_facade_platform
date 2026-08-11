@@ -169,12 +169,46 @@ RayShoot(+법선) → 실패 시 RayShoot(-법선)
 
 ### M1 — 골든 픽스처 추출
 
-- [ ] `projection.py`에 `branch_taken` 진단 출력 추가 (기존 동작 불변)
-- [ ] T1~T8을 Rhino에서 실행해 JSON 덤프하는 스크립트 작성
-- [ ] `plugin/fixtures/*.json` 커밋
-- [ ] 픽스처 재생성이 재현 가능한지 확인 — **두 번 돌려 같은 값이 나와야 함**
+- [x] `projection.py`에 `branch_taken` 진단 출력 추가 (기존 동작 불변) — 선택적 출력 파라미터 방식
+- [x] T1~T8을 Rhino에서 실행해 JSON 덤프하는 스크립트 작성 — `adaptive_mold/tools/dump_fixtures.py`
+- [x] `plugin/fixtures/*.json` 커밋 — 8개
+- [x] 픽스처 재생성이 재현 가능한지 확인 — **세 겹으로 확인됨**
+  - 스크립트가 케이스마다 2회 실행해 값 대조 후에만 기록
+  - Rhino 재시작 전후 동일
+  - **다른 파이썬 엔진(IronPython 2.7 ↔ CPython 3)에서도 값 동일** — 8케이스 6배열 전부 `==`
 
 재현되지 않으면 그 시점에 멈춥니다. 비결정적 출력은 정답지가 될 수 없습니다.
+
+**픽스처는 CPython 3로 생성합니다.** 값은 엔진과 무관하지만(위) 직렬화 형태가 다릅니다 —
+IronPython 2.7은 dict에 순서가 없어 JSON 키 순서가 매번 바뀌고 줄 끝에 공백이 붙어,
+같은 값인데도 `git diff`가 수천 줄 뜹니다. 정답지는 diff가 읽혀야 쓸모가 있습니다.
+
+**재생성 절차 (GUI 조작 없음):**
+
+```
+1. Rhino 8 실행 (/netcore)
+2. 명령창에 mcpstart          ← 유일한 수동 단계 (포트 1999)
+3. python adaptive_mold/tools/dump_via_bridge.py
+4. 출력 끝의 "전 케이스 재현 확인" 확인 — 실패가 있으면 거기서 멈춤
+5. git diff plugin/fixtures/  — 값이 왜 바뀌었는지 설명 가능한지 확인
+```
+
+`dump_via_bridge.py`는 브리지(IronPython 2.7)에서 `_-RunPythonScript`를 태워
+`dump_fixtures.py`가 자기 shebang(`#! python 3`)대로 CPython 3로 돌게 합니다.
+**`Rhino.exe /runscript=`로 밖에서 직접 태우는 것은 여전히 안 됩니다** — 조용히 무반응,
+원인 미확정. J-005 TRAP-01.
+
+**M1 완료 (2026-08-12).** 저널: [`docs/journal/J-002-M1-golden-fixtures.md`](docs/journal/J-002-M1-golden-fixtures.md),
+[`J-003`](docs/journal/J-003-phaseB-and-rhino-mcp.md), [`J-004`](docs/journal/J-004-elastic-deck-sag.md),
+[`J-005`](docs/journal/J-005-M1-close-engine-parity.md)
+
+**M2로 넘기는 픽스처의 한계 — M3 대조 시 반드시 감안할 것:**
+
+| 한계 | 내용 |
+|---|---|
+| 폴백 가지 5/7 | `closest`·`default`를 T1~T8이 한 번도 타지 않음. 그 두 가지는 대조로 검증되지 않는다 |
+| 클램핑 케이스 1개 | `T5_deep_clamp`가 실제로는 클램핑을 안 한다 — Phase B가 곡면을 stroke 중앙(100.0)으로 옮겨 `clamp=0`. 클램핑을 태우는 것은 T3뿐 |
+| 부호 | 높이가 `DistanceTo`/`abs()`라 항상 양수. 곡면이 그리드 아래여도 양수 |
 
 ### M2 — Core 포팅 (A~D)
 
@@ -224,7 +258,7 @@ plugin/                          # ★ 신규 — C# 전용 최상위
 | # | 리스크 | 대응 |
 |---|---|---|
 | 1 | ~~SDK 9로 `net7.0` 빌드 실패~~ | **해소 (M0, 2026-08-11)** — 경고 0·오류 0으로 빌드됨 |
-| 2 | **`RayShoot` 오버로드 불일치** — 아래 참조 | M2에서 실측 확인 후 보고 |
+| 2 | ~~**`RayShoot` 오버로드 불일치**~~ | **실현·해소 (M1, 2026-08-11)** — 아래 참조 |
 | 3 | 기하 연산 부동소수 차이로 픽스처 불일치 | 허용오차 조정. 단 **플래그·가지는 예외 없음** |
 | 4 | GhPython과 `.gha`가 같은 GH에서 이름 충돌 | 컴포넌트 이름·GUID를 다르게 (`AdaptiveMold Pins`) |
 
@@ -239,7 +273,18 @@ hit_pt = ray_pos.PointAt(t_pos[0])       # t_pos[0]을 곡선 파라미터로 �
 
 RhinoCommon의 `RayShoot` 오버로드에 따라 반환이 **파라미터가 아니라 교점(`Point3d`)** 일 수 있습니다. Python은 느슨해서 넘어가지만 **C#은 컴파일 단계에서 걸립니다.**
 
-만약 실제로 그렇다면 **이 폴백 가지는 현재 Python에서 정상 동작하지 않고 있을 가능성**이 있습니다. 즉 포팅이 기존 버그를 찾아내는 셈입니다. 현 시점에서는 **미검증**이며, M2에서 실측으로 확인하고 결과를 이 문서에 반영합니다.
+**실측 결과 (M1, 2026-08-11) — 예상이 맞았고 예상보다 넓었습니다.**
+
+`Intersection.RayShoot(Ray3d, IEnumerable<GeometryBase>, int)`는 **교점 `Point3d[]`** 를 반환합니다.
+구현이 이를 곡선 파라미터로 착각해 `Ray3d.PointAt(double)`에 넘겼고, **레이가 맞는 즉시**
+`TypeError`로 죽었습니다. 결함은 Phase D뿐 아니라 **Phase B에도 복제**돼 있어 4곳이었고,
+T1(가장 단순한 평면)조차 Phase B 첫 그리드 포인트에서 터졌습니다 —
+**이 파이프라인은 한 번도 정상 완주한 적이 없었습니다.**
+
+빗나가면 `None`을 돌려주고 "곡면 밖"으로 조용히 처리되므로, 곡면이 그리드를 안 덮는 배치에서는
+아무 일도 없는 것처럼 보였습니다. 그래서 오래 숨었습니다.
+사양서 `01_core_geometry_*.md:190-193`이 처음부터 옳은 형태를 명시하고 있었으므로
+**구현이 자기 사양서를 어긴 것**입니다. 상세: [`J-002`](docs/journal/J-002-M1-golden-fixtures.md) TRAP-01.
 
 ---
 
