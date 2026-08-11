@@ -24,6 +24,7 @@ C# 쪽이 같은 RhinoCommon 호출로 동일한 지오메트리를 재구성하
 
 import os
 import sys
+import io
 import json
 import math
 
@@ -155,56 +156,56 @@ DEFAULT_PARAMS = {
 CASES = [
     {
         "case": "T1_flat_parallel",
-        "note": "평면 target이 base_plane과 평행 — 모든 높이 동일, clamp 없음",
+        "note": "flat target parallel to base_plane - all heights equal, no clamping",
         "surface": {"kind": "flat", "z_height": 200.0, "size": 3000.0},
         "base_plane": None,
         "params": {},
     },
     {
         "case": "T2_tilted",
-        "note": "10도 기울어진 평면 — Phase B 정렬 후 높이 균일화",
+        "note": "10deg tilted plane - heights must become uniform after Phase B alignment",
         "surface": {"kind": "tilted", "tilt_degrees": 10.0, "z_base": 200.0, "size": 2000.0},
         "base_plane": None,
         "params": {},
     },
     {
         "case": "T3_hemisphere",
-        "note": "반구 — 중앙 최고, 가장자리는 확장 영역. 폴백 가지가 가장 많이 갈리는 케이스",
+        "note": "hemisphere - center highest, edges in extension zone. most fallback branching",
         "surface": {"kind": "hemisphere", "radius": 400.0, "center_z": 0.0},
         "base_plane": None,
         "params": {},
     },
     {
         "case": "T4_small_surface",
-        "note": "곡면이 mold보다 작음 — extension_flags 발생",
+        "note": "surface smaller than mold - extension_flags expected",
         "surface": {"kind": "flat", "z_height": 200.0, "size": 600.0},
         "base_plane": None,
         "params": {"width": 1000.0, "length": 1000.0},
     },
     {
         "case": "T5_deep_clamp",
-        "note": "max_height=200 + 깊은 곡면 — clamp 발생",
+        "note": "max_height=200 with deep surface - clamping expected",
         "surface": {"kind": "flat", "z_height": 500.0, "size": 3000.0},
         "base_plane": None,
         "params": {"max_height": 200.0},
     },
     {
         "case": "T6_flat_150",
-        "note": "z=150 평면. 원래 T6는 rod 스케일(Phase E) 검증이나 여기선 A~D만",
+        "note": "flat plane at z=150. original T6 tested rod scale (Phase E); here A-D only",
         "surface": {"kind": "flat", "z_height": 150.0, "size": 3000.0},
         "base_plane": None,
         "params": {},
     },
     {
         "case": "T7_rotated_base_plane",
-        "note": "base_plane을 회전·이동 — 첫 grid_pt가 plane origin과 일치해야 함",
+        "note": "rotated/translated base_plane - first grid_pt must equal plane origin",
         "surface": {"kind": "flat", "z_height": 300.0, "size": 3000.0},
         "base_plane": {"kind": "rotated"},
         "params": {},
     },
     {
         "case": "T8_large_grid",
-        "note": "11x11=121 액추에이터 — 성능 기준(3초) 겸용",
+        "note": "11x11=121 actuators - doubles as the 3s performance bound",
         "surface": {"kind": "flat", "z_height": 200.0, "size": 4000.0},
         "base_plane": None,
         "params": {"width": 2000.0, "length": 2000.0, "spacing": 200.0},
@@ -215,6 +216,29 @@ CASES = [
 # ──────────────────────────────────────
 # 실행
 # ──────────────────────────────────────
+
+def _to_unicode(obj):
+    """dict/list 안의 bytes 문자열을 재귀적으로 unicode로 올린다.
+
+    IronPython 2.7에서 소스의 한글 리터럴은 utf-8 bytes(str)이고,
+    json 인코더가 그것을 ascii로 처리하려다 UnicodeEncodeError를 낸다.
+    Python 3에서는 아무 일도 하지 않는다.
+    """
+    if isinstance(obj, dict):
+        return dict((_to_unicode(k), _to_unicode(v)) for k, v in obj.items())
+    if isinstance(obj, (list, tuple)):
+        return [_to_unicode(v) for v in obj]
+    if isinstance(obj, bytes) and bytes is str:
+        return obj.decode("utf-8")
+    return obj
+
+
+def _as_text(s):
+    """io.open(encoding=...)에 쓸 수 있는 텍스트로 맞춘다."""
+    if isinstance(s, bytes):
+        return s.decode("utf-8")
+    return s
+
 
 def run_case(case):
     """케이스 하나를 실행해 비교 가능한 dict를 돌려준다."""
@@ -334,8 +358,10 @@ def main():
         path = os.path.join(OUT_DIR, name + ".json")
         # encoding 명시 필수: Windows 한국어 로캘에서 open()의 기본 인코딩이
         # cp949라 em dash 같은 문자를 못 쓴다.
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(fixture, f, indent=2, sort_keys=False)
+        # 또한 IronPython 2.7의 json 인코더는 utf-8 bytes 문자열에서 죽으므로
+        # 덤프 전에 전부 unicode로 올린다.
+        with io.open(path, "w", encoding="utf-8") as f:
+            f.write(_as_text(json.dumps(_to_unicode(fixture), indent=2, sort_keys=False)))
 
         log("[OK] {:<24} pins={:<4} clamp={:<4} ext={:<4} branches={}".format(
             name,
@@ -352,7 +378,7 @@ def main():
     else:
         log("전 케이스 재현 확인 — 픽스처 {}개 기록됨.".format(len(CASES)))
 
-    with open(os.path.join(OUT_DIR, "_dump_log.txt"), "w", encoding="utf-8") as f:
+    with io.open(os.path.join(OUT_DIR, "_dump_log.txt"), "w", encoding="utf-8") as f:
         f.write("\n".join(_LOG))
 
 
@@ -365,7 +391,7 @@ except Exception:
     try:
         if not os.path.isdir(OUT_DIR):
             os.makedirs(OUT_DIR)
-        with open(os.path.join(OUT_DIR, "_dump_log.txt"), "w", encoding="utf-8") as f:
+        with io.open(os.path.join(OUT_DIR, "_dump_log.txt"), "w", encoding="utf-8") as f:
             f.write("\n".join(_LOG) + "\n\n[예외]\n" + tb)
     except Exception:
         pass

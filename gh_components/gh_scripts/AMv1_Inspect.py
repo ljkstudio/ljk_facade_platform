@@ -54,7 +54,6 @@ for _name in list(sys.modules.keys()):
         del sys.modules[_name]
 
 from adaptive_mold_v1 import run_adaptive_mold
-from optimization import ROTATION_MODE_CURRENT, ROTATION_MODE_NORMALIZED
 
 
 # ── Guid 방어 ───────────────────────────────────────────
@@ -153,8 +152,6 @@ def make_envelope(plane, w, l, hmin, hmax):
 
 
 if compute and target_srf is not None:
-    mode = ROTATION_MODE_NORMALIZED if normalized else ROTATION_MODE_CURRENT
-
     r = run_adaptive_mold(
         target_srf,
         base_plane=base_plane,
@@ -162,7 +159,6 @@ if compute and target_srf is not None:
         max_height=max_height, min_height=min_height,
         compute=True,
         component=ghenv.Component,
-        rotation_mode=mode,
     )
 
     positioned = r.positioned_srf
@@ -186,14 +182,29 @@ if compute and target_srf is not None:
     ny = int(length // spacing) + 1
     deck = make_deck_mesh(pin_tops, nx, ny)
 
-    # 핀 상단이 목표 곡면에서 얼마나 벗어났는가 — 몰드 품질의 핵심 지표
-    target_brep = positioned
-    if target_brep is not None:
-        if isinstance(target_brep, rg.Brep):
-            probe = target_brep
-        else:
-            probe = target_brep.ToBrep()
-        for p in pin_tops:
+    # ── 이탈량 — 몰드 품질의 핵심 지표 ────────────────────
+    #
+    # 핀 상단을 재면 안 된다. 핀 높이는 목표 곡면에 레이캐스트해서 구하므로
+    # 핀 상단은 정의상 곡면 위에 있고, 그 거리는 항상 0이다(동어반복).
+    #
+    # 실제로 재야 하는 것은 **핀과 핀 사이**다. 핀은 이산적인 지지점이고
+    # 그 사이의 데크는 목표 곡면을 따라가지 못한다. 이 새그(sagitta)가
+    # 몰드가 그 형상을 재현할 수 있는지를 말해준다.
+    #   - 평면·단곡: 거의 0 (핀 격자로 잘 근사됨)
+    #   - 안장형:    커짐 (핀 격자로 근사하기 어려운 형상)
+
+    probe = positioned
+    if probe is not None and not isinstance(probe, rg.Brep):
+        probe = probe.ToBrep()
+
+    if probe is not None and deck is not None:
+        samples = []
+        for f in range(deck.Faces.Count):
+            samples.append(deck.Faces.GetFaceCenter(f))
+        for e in range(deck.TopologyEdges.Count):
+            ln = deck.TopologyEdges.EdgeLine(e)
+            samples.append(ln.PointAt(0.5))
+        for p in samples:
             cp = probe.ClosestPoint(p)
             deviation.append(p.DistanceTo(cp) if cp is not None else None)
 
@@ -209,8 +220,6 @@ if compute and target_srf is not None:
     lines = [
         "AMv1 Inspect",
         "=" * 40,
-        "회전 방식:   {}".format("NORMALIZED (수정안)" if normalized
-                                 else "CURRENT (현재 구현)"),
         "그리드:      {} x {} = {} 핀".format(nx, ny, nx * ny),
         "stroke:      {:.0f} ~ {:.0f} mm".format(min_height, max_height),
         "",
@@ -218,14 +227,17 @@ if compute and target_srf is not None:
             min(heights) if heights else 0,
             max(heights) if heights else 0,
             (max(heights) - min(heights)) if heights else 0),
+        "             <- 평면 패널이면 폭이 0이어야 정렬이 맞은 것",
         "클램핑:      {} / {}   <- 0이 아니면 그 지점은 목표를 재현 못 함".format(
             n_clamped, len(r.pin_heights)),
         "확장영역:    {} / {}   <- 원본 곡면 밖, 높이가 외삽값".format(
             n_ext, len(r.pin_heights)),
         "",
-        "목표면 이탈: max={:.3f}  avg={:.3f} mm".format(
+        "핀 사이 새그: max={:.3f}  avg={:.3f} mm  ({}점 샘플)".format(
             max(valid_dev) if valid_dev else 0,
-            sum(valid_dev) / len(valid_dev) if valid_dev else 0),
+            sum(valid_dev) / len(valid_dev) if valid_dev else 0,
+            len(valid_dev)),
+        "             <- 핀 격자가 그 형상을 못 따라가는 정도",
         "폴백 가지:   {}".format(branch_counts),
         "",
         r.info,
