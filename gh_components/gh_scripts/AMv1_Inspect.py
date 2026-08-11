@@ -18,7 +18,8 @@
 #   max_height      float  400
 #   min_height      float  0
 #   pin_radius      float  0 이면 spacing*0.12 자동
-#   normalized      bool   False
+#   normalized      bool   False (현재 코드는 사용하지 않음 — 정규화가 본체가 됨)
+#   wire_extend     float  강선 오버행, 없으면 250 (실물 관측 200~300)
 #   compute         bool   False
 #
 # Outputs:
@@ -26,6 +27,7 @@
 #   pins_clamped   stroke 한계에 걸린 핀   — 빨강 권장
 #   pins_ext       확장영역 핀             — 노랑 권장
 #   pin_tops       핀 상단 점
+#   wires          U방향 강선 (3차 보간곡선, 양 끝 오버행)
 #   deck           핀 상단을 잇는 메시 (실제로 성형되는 면)
 #   positioned     정렬된 목표 곡면
 #   extended       확장된 곡면
@@ -100,11 +102,21 @@ if not pin_radius:
 if normalized is None:
     normalized = False
 
+# 강선 오버행 — 액추에이터 영역 밖으로 더 나가는 길이.
+# 실물 사진(image/adaptiveMold_image.png)에서 200~300mm로 관측된다.
+try:
+    wire_extend
+except NameError:
+    wire_extend = None
+if wire_extend is None:
+    wire_extend = 250.0
+
 
 pins_ok = []
 pins_clamped = []
 pins_ext = []
 pin_tops = []
+wires = []
 deck = None
 positioned = None
 extended = None
@@ -140,6 +152,35 @@ def make_deck_mesh(tops, nx, ny):
     mesh.Normals.ComputeNormals()
     mesh.Compact()
     return mesh
+
+
+def make_wires(tops, nx, ny, overhang):
+    """U 방향(X, i가 변하는 방향) 강선. 핀 상단을 잇고 양 끝을 내민다.
+
+    **직선 폴리라인이 아니라 3차 보간곡선이다.** 탄성 스트립은 변형에너지
+    (∫κ²)를 최소화하는 형상으로 안정되고 그 해가 자연 3차 스플라인이다.
+    직선 데크는 물리 모델이 아니라 상한선이며, 새그를 26배 과대평가한다.
+
+    **오버행은 접선 직선으로 뻗는다** (`CurveExtensionStyle.Line`).
+    마지막 핀 바깥은 하중도 모멘트도 없는 자유단이므로 직선이 된다.
+    곡률을 이어가는 Smooth 연장은 자유단에 모멘트가 남아 있다는 뜻이어서,
+    끝을 붙잡는 장치가 실제로 있을 때만 맞다.
+    """
+    if len(tops) != nx * ny or nx < 2:
+        return []
+    out = []
+    for j in range(ny):
+        row = [tops[j * nx + i] for i in range(nx)]
+        crv = rg.Curve.CreateInterpolatedCurve(row, 3)
+        if crv is None:
+            continue
+        if overhang and overhang > 0:
+            ext = crv.Extend(rg.CurveEnd.Both, overhang,
+                             rg.CurveExtensionStyle.Line)
+            if ext is not None:
+                crv = ext
+        out.append(crv)
+    return out
 
 
 def make_envelope(plane, w, l, hmin, hmax):
@@ -181,6 +222,7 @@ if compute and target_srf is not None:
     nx = int(width // spacing) + 1
     ny = int(length // spacing) + 1
     deck = make_deck_mesh(pin_tops, nx, ny)
+    wires = make_wires(pin_tops, nx, ny, wire_extend)
 
     # ── 이탈량 — 몰드 품질의 핵심 지표 ────────────────────
     #
@@ -232,6 +274,12 @@ if compute and target_srf is not None:
             n_clamped, len(r.pin_heights)),
         "확장영역:    {} / {}   <- 원본 곡면 밖, 높이가 외삽값".format(
             n_ext, len(r.pin_heights)),
+        "",
+        "강선(U방향): {}본  오버행 {:.0f} mm/끝  길이 {:.0f} ~ {:.0f} mm".format(
+            len(wires), wire_extend,
+            min(c.GetLength() for c in wires) if wires else 0,
+            max(c.GetLength() for c in wires) if wires else 0),
+        "             <- 3차 보간곡선(탄성 스트립), 오버행은 접선 직선",
         "",
         "핀 사이 새그: max={:.3f}  avg={:.3f} mm  ({}점 샘플)".format(
             max(valid_dev) if valid_dev else 0,
