@@ -57,6 +57,31 @@ from adaptive_mold_v1 import run_adaptive_mold
 from optimization import ROTATION_MODE_CURRENT, ROTATION_MODE_NORMALIZED
 
 
+# ── Guid 방어 ───────────────────────────────────────────
+# GhPython 입력에 타입 힌트가 걸려 있지 않으면 Rhino 문서 객체가
+# 지오메트리가 아니라 Guid로 넘어온다. 그러면 "target_srf is invalid"
+# 또는 "expected Plane, got Guid"가 난다. 힌트가 정상이면 이 함수는
+# 아무 일도 하지 않는다.
+
+import System
+import Rhino
+
+
+def resolve(x):
+    """Guid면 활성 Rhino 문서에서 지오메트리를 찾아 돌려준다."""
+    if not isinstance(x, System.Guid):
+        return x
+    doc = Rhino.RhinoDoc.ActiveDoc
+    if doc is None:
+        return None
+    obj = doc.Objects.FindId(x)
+    return obj.Geometry if obj is not None else None
+
+
+target_srf = resolve(target_srf)
+base_plane = resolve(base_plane)
+
+
 # ── 기본값 ──────────────────────────────────────────────
 
 if base_plane is None:

@@ -59,6 +59,31 @@ def log(m=""):
 #   geo    → 배선 없음. 사용자가 직접 곡면을 연결
 #   plane  → 배선 없음 (비우면 WorldXY)
 
+# 타입 힌트가 없으면 GhPython은 Rhino 문서 객체를 Guid로 넘긴다.
+# 그러면 target_srf가 지오메트리가 아니라 Guid가 되어 "invalid"가 되고,
+# base_plane은 "expected Plane, got Guid"로 터진다. 반드시 걸어야 한다.
+HINTS = {
+    "str":   "GH_StringHint_CS",
+    "num":   "GH_DoubleHint_CS",
+    "bool":  "GH_BooleanHint_CS",
+    "geo":   "GH_BrepHint",
+    "plane": "GH_PlaneHint",
+}
+
+
+def make_hint(kind):
+    """Grasshopper.Kernel.Parameters.Hints 에서 힌트 인스턴스를 만든다."""
+    name = HINTS.get(kind)
+    if not name:
+        return None
+    try:
+        cls = getattr(ghk.Parameters.Hints, name)
+        return cls()
+    except Exception as e:
+        log("  [힌트 실패] {} -> {}".format(name, e))
+        return None
+
+
 INPUTS = [
     ("platform_path", "str",   REPO_ROOT,                 "repo root"),
     ("target_srf",    "geo",   None,                      "목표 곡면 — 직접 연결"),
@@ -108,6 +133,14 @@ def configure_params(comp):
         p.Description = desc
         p.Access = ghk.GH_ParamAccess.item
         p.Optional = True
+
+        hint = make_hint(kind)
+        if hint is not None:
+            p.TypeHint = hint
+            log("  힌트 {:<14} <- {}".format(name, HINTS[kind]))
+        else:
+            log("  힌트 {:<14} <- 없음(원시 Guid로 넘어올 수 있음)".format(name))
+
         comp.Params.RegisterInputParam(p)
 
     for name in OUTPUTS:
