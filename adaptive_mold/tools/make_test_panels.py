@@ -16,8 +16,9 @@
   panel_tilt10    10도 기울어진 평면. **지금 조사 중인 T2 케이스.**
                   제대로 정렬되면 높이가 균일해져야 한다.
   panel_cylinder  단곡(한 방향). 핀 몰드가 잘 재현해야 하는 형상.
-  panel_saddle    안장형(역방향 이중곡). 재현이 어려운 형상 —
-                  클램핑이 아니라 '이탈량'이 커지는지 봐야 한다.
+  panel_saddle    안장형(역방향 이중곡). **ruled surface라 U 방향
+                  직선이 곡면 위에 정확히 놓인다** — 스트립을 rulings
+                  방향으로 깔면 새그가 0이다. 실측 확인됨.
   panel_dome      돔(동방향 이중곡). 중앙이 높아 stroke 상한에 걸리기 쉽다.
 """
 
@@ -103,12 +104,27 @@ def make_saddle(amp):
     return ruled(a, b)
 
 
-def make_dome(radius, top_z):
-    """구면. 중심을 아래로 내려 상단 캡이 몰드 위에 오게 한다.
-    ruled surface로는 동방향 이중곡을 만들 수 없어 구를 쓴다."""
-    center = r3.Point3d(CX, CY, top_z - radius)
-    sphere = r3.Sphere(center, radius)
-    return r3.NurbsSurface.CreateFromSphere(sphere)
+def make_dome(radius, top_z, reach=800.0):
+    """돔 캡. 호를 Z축 둘레로 돌린 회전면.
+
+    구 전체(CreateFromSphere)를 쓰면 아래 반구까지 2400mm를 차지해
+    문서에서 다루기 나쁘고 z 범위 보고도 오해를 부른다.
+    ruled surface로는 동방향 이중곡을 못 만들므로 회전면을 쓴다.
+    reach는 반경 방향 도달 거리 — 몰드 대각 반(707mm)을 덮어야 한다.
+    """
+    cz = top_z - radius
+
+    def z_at(rad):
+        return cz + math.sqrt(radius * radius - rad * rad)
+
+    arc = r3.Arc(r3.Point3d(CX, CY, z_at(0.0)),
+                 r3.Point3d(CX + reach / 2.0, CY, z_at(reach / 2.0)),
+                 r3.Point3d(CX + reach, CY, z_at(reach)))
+    # rhino3dm의 ArcCurve는 Arc를 받는 생성자가 없다. NurbsCurve로 변환한다.
+    profile = r3.NurbsCurve.CreateFromArc(arc)
+    axis = r3.Line(r3.Point3d(CX, CY, cz), r3.Point3d(CX, CY, cz + 1.0))
+    # rhino3dm은 각도 인자를 요구한다 (RhinoCommon과 시그니처가 다름)
+    return r3.RevSurface.Create(profile, axis, 0.0, 2.0 * math.pi)
 
 
 def z_range(srf, n=41):
@@ -141,9 +157,9 @@ PANELS = [
     ("panel_cylinder", (60, 160, 255),  make_cylinder(150.0),
      "단곡(한 방향) — 핀 몰드가 잘 재현해야 함"),
     ("panel_saddle",   (220, 60, 160),  make_saddle(120.0),
-     "안장형 — 재현이 어려움. 이탈량을 볼 것"),
+     "안장형(ruled) — U 방향 스트립이면 새그 0"),
     ("panel_dome",     (80, 200, 120),  make_dome(1200.0, 250.0),
-     "돔 — 중앙이 높아 stroke 상한에 걸리기 쉬움"),
+     "돔 캡 — 동방향 이중곡. 새그가 가장 큼"),
 ]
 
 
