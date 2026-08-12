@@ -16,9 +16,14 @@ GDI+로 24x24를 그리므로 이 파일이 곧 아이콘의 정본이다.
 **`ComponentServer.LoadExternalFiles()` 를 호출하지 말 것.** Grasshopper가
 UserObjects 폴더 변경을 스스로 반영하므로 불필요하고, 호출하면 **모든 User
 Object가 새 GUID로 다시 등록되어 팔레트에 중복으로 쌓인다**(실측: LJKS 6 → 12,
-사용자 소유 항목까지 복제됨). `ClearStaleUserObjects()` 로는 정리되지 않는다.
-중복이 생겼으면 `ComponentServer.ObjectProxies`(List)에서 이름 기준으로
-제거하거나 Rhino를 재시작해야 한다 — 디스크는 멀쩡하다.
+사용자 소유 항목까지 복제됨).
+
+**중복은 세션 안에서 지울 수 없다 (실측).** `ClearStaleUserObjects()` 는 듣지
+않고, `ObjectProxies`(List)에서 `Remove` 하면 그 순간엔 줄지만 잠시 뒤 다시
+2배로 돌아온다(12초 간격 3회 관찰에서 12개로 고정). 팔레트가 별도 레지스트리를
+갖고 다시 채우는 것으로 보인다.
+→ **디스크가 정본이다.** 파일이 맞으면 Rhino를 다시 켜면 정상으로 돌아온다.
+이 도구의 정리 단계는 "가능하면 치우는" 보조 수단이고 보장 수단이 아니다.
 
 선결 조건: Rhino 8 + `mcpstart`, 그리고 대상 컴포넌트가 캔버스에 있어야 한다.
 
@@ -45,12 +50,14 @@ except Exception:
 TAB = "LJKS"
 
 # (닉네임, 서브카테고리, 아이콘 그리기 함수 이름)
-# 번호를 붙여야 리본에서 파이프라인 순서대로 정렬된다 (GH는 알파벳순).
+# 넷을 한 그룹(AMv1)에 둔다 — 개수가 적어 나누면 리본이 오히려 흩어진다.
+# 늘어나면 그때 쪼갠다.
+SUB = "AMv1"
 COMPONENTS = [
-    ("AMv1 Inspect",    "1 Mold",     "draw_mold"),
-    ("AMv1 RollerPath", "2 Toolpath", "draw_path"),
-    ("AMv1 PathFrames", "3 Display",  "draw_frames"),
-    ("AMv1 Robot",      "4 Robot",    "draw_robot"),
+    ("AMv1 Inspect",    SUB, "draw_mold"),
+    ("AMv1 RollerPath", SUB, "draw_path"),
+    ("AMv1 PathFrames", SUB, "draw_frames"),
+    ("AMv1 Robot",      SUB, "draw_robot"),
 ]
 
 
@@ -184,24 +191,60 @@ for nick, sub, fn in SPEC:
     lines.append("%-18s %-11s saved=%s %d bytes  %s" % (
         nick, sub, ok, size, uo.Path))
 
-# 탭을 바꿔 다시 저장하면 옛 카테고리의 프록시가 세션에 남는다. 정리한다.
-srv = ghk.Instances.ComponentServer
-try:
-    srv.ClearStaleUserObjects()
-    lines.append("ClearStaleUserObjects 호출")
-except Exception as ex:
-    lines.append("ClearStaleUserObjects 실패: %s" % ex)
+# ── 프록시 정리 ──────────────────────────────────────────
+#
+# 파일을 다시 저장하면 Grasshopper의 폴더 감시가 **새 프록시를 추가**한다.
+# 교체가 아니라 추가라서, 카테고리를 바꿔 저장하면 옛 항목이 팔레트에 남아
+# 같은 이름이 둘로 보인다. ClearStaleUserObjects() 는 이것을 정리하지 못한다.
+#
+# 그래서 의도한 (Category, SubCategory) 를 가진 쪽만 남기고 지운다.
+# 이름이 같은 옛 프록시는 내용이 같거나 구버전이므로 버려도 잃을 것이 없다.
 
-# 결과 확인 — 탭별 개수
-for cat in (TAB, "LJKSTUDIO"):
-    n = 0
-    for p in srv.ObjectProxies:
-        try:
-            if p.Desc.Category == cat:
-                n += 1
-        except Exception:
-            pass
-    lines.append("탭 %-10s 프록시 %d개" % (cat, n))
+srv = ghk.Instances.ComponentServer
+coll = srv.ObjectProxies
+want = dict((nick, sub) for nick, sub, fn in SPEC)
+
+mine = []
+for p in coll:
+    try:
+        if p.Desc.Name in want:
+            mine.append(p)
+    except Exception:
+        pass
+
+keep = {{}}
+drop = []
+for p in mine:
+    nm = p.Desc.Name
+    ok = (p.Desc.Category == TAB and p.Desc.SubCategory == want[nm])
+    if ok and nm not in keep:
+        keep[nm] = p
+    else:
+        drop.append(p)
+
+# 의도한 것을 못 찾았으면(아직 감시가 반영 안 됨) 지우지 않는다 — 다 날리면 안 된다
+for p in list(drop):
+    if p.Desc.Name not in keep:
+        drop.remove(p)
+
+for p in drop:
+    try:
+        coll.Remove(p)
+    except Exception as ex:
+        lines.append("프록시 제거 실패 %s: %s" % (p.Desc.Name, ex))
+
+lines.append("프록시 정리: 유지 %d, 제거 %d" % (len(keep), len(drop)))
+
+final = []
+for p in coll:
+    try:
+        if p.Desc.Category == TAB:
+            final.append("%s / %s" % (p.Desc.SubCategory, p.Desc.Name))
+    except Exception:
+        pass
+lines.append("%s 탭 %d개:" % (TAB, len(final)))
+for f in sorted(final):
+    lines.append("  %s" % f)
 '''
 
 
