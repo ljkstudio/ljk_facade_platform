@@ -7,8 +7,12 @@ MCP 서버 계층을 건너뛴다. 브리지는 JSON을 그대로 받으므로 �
 """
 
 import socket
+import io
 import json
+import os
 import sys
+import tempfile
+import uuid
 
 HOST, PORT = "127.0.0.1", 1999
 
@@ -47,6 +51,58 @@ class Rhino(object):
         except Exception:
             pass
         self.sock.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+Bridge = Rhino          # 이름만 다른 별칭 — 호출부에서 의미가 드러나도록
+
+
+_WRAPPER = u'''
+import io, os, sys, traceback
+import Rhino
+import Rhino.Geometry as rg
+lines = []
+try:
+    import Grasshopper as gh
+except Exception:
+    gh = None
+try:
+{body}
+except Exception:
+    lines.append(traceback.format_exc())
+_f = io.open(r"{out}", "w", encoding="utf-8")
+try:
+    _f.write(u"\\n".join([unicode(x) for x in lines]))
+finally:
+    _f.close()          # close 필수 — .NET GC라 빠뜨리면 0바이트 파일이 남는다
+'''
+
+
+def remote(bridge, body):
+    """브리지에서 코드를 실행하고 `lines`에 담긴 결과를 문자열로 돌려준다.
+
+    결과를 stdout으로 받지 않는 이유: 브리지는 IronPython 2.7이고 stdout이
+    ascii라 한글 print가 죽는다. 응답 JSON에 비ASCII를 넣어도 인코더가 죽는다.
+    그래서 원격 코드가 파일에 쓰고 이쪽이 읽는다.
+
+    body 안에서 쓸 수 있는 것: lines, Rhino, rg, gh(없으면 None).
+    들여쓰기는 여기서 맞춰 넣으므로 body는 왼쪽 정렬로 쓰면 된다.
+    """
+    out = os.path.join(tempfile.gettempdir(),
+                       "am_bridge_%s.txt" % uuid.uuid4().hex[:8])
+    indented = u"\n".join(u"    " + ln for ln in body.splitlines())
+    bridge.py(_WRAPPER.format(body=indented, out=out.replace("\\", "\\\\")))
+    if not os.path.exists(out):
+        raise RuntimeError("결과 파일이 생기지 않았다: %s" % out)
+    with io.open(out, encoding="utf-8") as f:
+        text = f.read()
+    os.remove(out)
+    return text
 
 
 def main():
