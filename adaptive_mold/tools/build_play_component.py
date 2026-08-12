@@ -56,9 +56,12 @@ INPUTS = [
     ("roller_d",      "GH_DoubleHint_CS",  False, ("slider", 20, 200, 60, 0)),
     ("show_path",     "GH_BooleanHint_CS", False, ("toggle", True)),
     ("solo",          "GH_BooleanHint_CS", False, ("toggle", True)),
+    ("show_body",     "GH_BooleanHint_CS", False, ("toggle", True)),
+    ("parts_file",    "GH_StringHint_CS",  False, None),
 ]
 
-OUTPUTS = ["pins", "deck", "links", "tcp", "roller", "duration", "info"]
+OUTPUTS = ["pins", "deck", "links", "body", "tcp", "roller",
+           "duration", "info"]
 
 # (내 입력, 상대 컴포넌트, 상대 출력)
 WIRING = [

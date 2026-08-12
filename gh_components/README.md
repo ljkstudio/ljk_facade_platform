@@ -10,7 +10,11 @@ GhPython 컴포넌트용 **RunScript 파일**은 `gh_scripts/` 폴더에 있습�
 | `gh_scripts/AMv1_RollerPath.py` | 롤러 툴패스 생성 (왕복 지그재그 + 공중 이동) |
 | `gh_scripts/AMv1_Robot.py` | IRB 6700 도달성 검사·포즈 생성 (IK) |
 | `gh_scripts/AMv1_PathFrames.py` | 경로 위 법선·툴축 표시 (경로 확인용) |
-| `gh_scripts/AMv1_Play.py` | **실제 속도 재생 — 핀 상승 + 로봇 성형** |
+| `gh_scripts/AMv1_Play.py` | **실제 속도 재생 — 핀 상승 + 로봇 성형 (IRB 6700 실물 형상)** |
+
+로봇 실물 메시는 `adaptive_mold/grasshopper/irb6700_parts.3dm` (파트 9개, 12만 면).
+웹 시뮬레이터의 GLB에서 `adaptive_mold/tools/import_robot_glb.py` 로 만든 것이고,
+원본이 바뀌면 그 도구를 다시 돌립니다 (`ljks_website_v2` 가 형제 경로에 있어야 합니다).
 
 리본에는 `LJKS / AMv1` 탭에 아이콘과 함께 등록되어 있습니다
 (`adaptive_mold/tools/make_user_objects.py`).

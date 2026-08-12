@@ -51,11 +51,14 @@
 #   roller_d       float    롤러 지름(표시용), 없으면 60
 #   show_path      bool     지나온 경로를 그린다, 없으면 True
 #   solo           bool     재생 중 다른 컴포넌트 프리뷰를 끈다, 없으면 True
+#   show_body      bool     실물 메시로 그린다, 없으면 True
+#   parts_file     str      irb6700_parts.3dm 경로. 비우면 저장소 기본 위치
 #
 # Outputs:
 #   pins       t 시점의 핀 (선)
 #   deck       t 시점의 핀 상단 격자 (폴리라인)
-#   links      t 시점의 로봇 링크
+#   links      t 시점의 로봇 링크 (스틱 피겨)
+#   body       t 시점의 로봇 실물 메시 (정지 상태에서만)
 #   tcp        t 시점의 TCP Plane
 #   roller     t 시점의 롤러 원
 #   duration   전체 재생 길이 (초)
@@ -91,6 +94,7 @@ for _name in list(sys.modules.keys()):
         del sys.modules[_name]
 
 import robot as rb
+import robot_body as rbb
 import playback as pb
 
 
@@ -119,9 +123,43 @@ _default("fps", 25, positive=True)
 _default("roller_d", 60.0, positive=True)
 _default("show_path", True)
 _default("solo", True)
+_default("show_body", True)
+_default("parts_file", "")
 
 if base_plane is None:
     base_plane = rg.Plane.WorldXY
+
+if not parts_file:
+    parts_file = os.path.join(platform_path, "adaptive_mold", "grasshopper",
+                              "irb6700_parts.3dm")
+
+
+# ── 실물 형상 로드 (캐시) ───────────────────────────────
+# 4 MB / 12만 면이라 솔루션마다 다시 읽으면 눈에 띄게 느리다.
+# 파일 수정시각까지 키에 넣어, 파일을 다시 만들면 알아서 갱신된다.
+
+PARTS_KEY = "AMv1_Play_parts"
+PARTS = {}
+parts_note = ""
+
+if show_body:
+    if not os.path.isfile(parts_file):
+        parts_note = "파트 파일이 없다 — 스틱 피겨로 그린다"
+    else:
+        mt = os.path.getmtime(parts_file)
+        cached = sc.sticky.get(PARTS_KEY)
+        if cached and cached[0] == parts_file and cached[1] == mt:
+            PARTS = cached[2]
+            parts_note = "캐시"
+        else:
+            PARTS = rbb.load_parts(parts_file)
+            sc.sticky[PARTS_KEY] = (parts_file, mt, PARTS)
+            parts_note = "새로 읽음"
+        missing = [n for n in rbb.PART_NAMES if n not in PARTS]
+        if missing:
+            parts_note += " (빠진 파트: {})".format(", ".join(missing))
+else:
+    parts_note = "show_body=False — 스틱 피겨"
 
 
 C_PIN_MOVING = sd.Color.FromArgb(255, 235, 140, 40)
@@ -132,6 +170,8 @@ C_ROLLER = sd.Color.FromArgb(255, 200, 60, 50)
 C_DONE = sd.Color.FromArgb(255, 200, 60, 50)
 C_TODO = sd.Color.FromArgb(255, 190, 195, 200)
 C_HUD = sd.Color.FromArgb(255, 30, 30, 30)
+# ABB 그래파이트 화이트 — URDF material rgba(0.9255, 0.9255, 0.9059)
+C_BODY = sd.Color.FromArgb(255, 236, 236, 231)
 
 
 # ── 이전 재생 정리 ──────────────────────────────────────
@@ -312,6 +352,7 @@ def build_frame(t):
     lks = []
     tcp_pl = None
     roller_crv = None
+    part_xf = {}
     pose = s["pose"]
     if pose is not None:
         lks = rb.link_lines_mm(pose, base_plane=robot_base)
@@ -320,8 +361,14 @@ def build_frame(t):
         # 롤러는 축(TCP X)에 직각인 원이다
         roller_crv = rg.Circle(
             rg.Plane(tcp_pl.Origin, tcp_pl.XAxis), roller_d / 2.0)
+        if PARTS:
+            # 변환만 만든다 — **메시를 복제하지 않는다.** 프레임마다 12만 면을
+            # 복제하면 재생이 늘어진다. 그리기는 PushModelTransform 이 한다.
+            part_xf = rbb.part_transforms(pose, base_plane=robot_base)
 
-    return s, pin_lines, moving, deck, lks, tcp_pl, roller_crv
+    return {"s": s, "pins": pin_lines, "moving": moving, "deck": deck,
+            "links": lks, "tcp": tcp_pl, "roller": roller_crv,
+            "part_xf": part_xf}
 
 
 # ── 컨듀잇 ──────────────────────────────────────────────
@@ -344,12 +391,13 @@ class PlayConduit(rd.DisplayConduit):
         sw = st["sw"]
         t0 = sw.Elapsed.TotalMilliseconds
 
-        s, pin_lines, moving, deck, lks, tcp_pl, roller_crv = st["frame"]
+        f = st["frame"]
+        s = f["s"]
         d = e.Display
 
-        for ln, mv in zip(pin_lines, moving):
+        for ln, mv in zip(f["pins"], f["moving"]):
             d.DrawLine(ln, C_PIN_MOVING if mv else C_PIN_DONE, 3)
-        for pl in deck:
+        for pl in f["deck"]:
             d.DrawPolyline(pl, C_DECK, 1)
 
         if st["show_path"] and st["tgt_pts"]:
@@ -359,10 +407,31 @@ class PlayConduit(rd.DisplayConduit):
             if seg + 1 < len(st["tgt_pts"]):
                 d.DrawPolyline(st["tgt_pts"][seg:], C_TODO, 1)
 
-        for ln in lks:
-            d.DrawLine(ln, C_ROBOT, 5)
-        if roller_crv is not None:
-            d.DrawCircle(roller_crv, C_ROLLER, 3)
+        # ── 실물 형상 ────────────────────────────────────
+        # **메시를 옮기지 않고 좌표계를 옮긴다.** Push/Pop 이면 원본을 그대로
+        # 그릴 수 있어 프레임마다 12만 면을 복제하지 않는다.
+        parts = st["parts"]
+        drew_body = False
+        if parts and f["part_xf"]:
+            mat = st["material"]
+            for name, mesh in parts.items():
+                xf = f["part_xf"].get(name)
+                if xf is None:
+                    continue
+                d.PushModelTransform(xf)
+                try:
+                    d.DrawMeshShaded(mesh, mat)
+                finally:
+                    d.PopModelTransform()
+            drew_body = True
+
+        # 스틱 피겨는 실물이 없을 때만 — 겹치면 실물 안쪽에 선이 비쳐 지저분하다
+        if not drew_body:
+            for ln in f["links"]:
+                d.DrawLine(ln, C_ROBOT, 5)
+
+        if f["roller"] is not None:
+            d.DrawCircle(f["roller"], C_ROLLER, 3)
 
         # HUD — 실제 시간으로 도는지 눈으로 확인할 수 있어야 한다
         txt = [
@@ -382,7 +451,18 @@ class PlayConduit(rd.DisplayConduit):
 # ── 재생 시작 / 스크럽 ──────────────────────────────────
 
 frame = build_frame(float(t))
-s0, pins, _mv, deck, links, tcp, roller = frame
+s0 = frame["s"]
+pins = frame["pins"]
+deck = frame["deck"]
+links = frame["links"]
+tcp = frame["tcp"]
+roller = frame["roller"]
+
+# 정지 상태에서는 출력으로 형상을 낸다 (재생 중에는 컨듀잇이 그린다)
+body = []
+if PARTS and frame["part_xf"] and not play:
+    body = [m for _n, m in rbb.posed_meshes(
+        PARTS, s0["pose"], base_plane=robot_base)]
 
 info_extra = []
 
@@ -394,12 +474,16 @@ if play and duration > 0:
         all_pts.append(ln.From)
         all_pts.append(ln.To)
     all_pts.extend(tgt_pts)
+    # 실물 형상은 링크 선보다 크다 — 베이스 반경과 팔 두께만큼 더 잡는다
+    all_pts.append(robot_base.Origin)
     bbox = rg.BoundingBox(all_pts) if all_pts else rg.BoundingBox.Unset
     if bbox.IsValid:
-        bbox.Inflate(500.0)
+        bbox.Inflate(1200.0 if PARTS else 500.0)
 
     state = {
         "frame": frame,
+        "parts": PARTS,
+        "material": rd.DisplayMaterial(C_BODY),
         "sw": System.Diagnostics.Stopwatch.StartNew(),
         "t0": float(t),
         "duration": duration,
@@ -516,6 +600,12 @@ else:
             "자동" if base_auto else "입력",
             robot_base.Origin.X, robot_base.Origin.Y, robot_base.Origin.Z))
         lines.append("             <- AMv1 Robot 과 같은 값이어야 한다")
+        if PARTS:
+            lines.append("실물 형상:   파트 {}개  면 {:,}개  ({})".format(
+                len(PARTS), rbb.face_count(PARTS), parts_note))
+            lines.append("             <- 메시를 복제하지 않고 좌표계를 옮겨 그린다")
+        else:
+            lines.append("실물 형상:   없음 — {}".format(parts_note))
     lines.append("")
     lines.append(pb.report(timeline))
     lines.append("")
