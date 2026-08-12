@@ -17,7 +17,16 @@ import sys
 import Rhino.Geometry as rg
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, "..", "src"))
+_SRC = os.path.normpath(os.path.join(HERE, "..", "src"))
+sys.path.insert(0, _SRC)
+
+# 모듈 캐시를 비운다 — Rhino 의 파이썬은 프로세스 수명 동안 캐시하므로 src/ 를
+# 고쳐도 옛 모듈이 쓰인다 (test_playback.py 의 같은 주석 참조).
+_norm = os.path.normcase(_SRC)
+for _name in list(sys.modules.keys()):
+    _p = getattr(sys.modules.get(_name), "__file__", None)
+    if _p and os.path.normcase(os.path.normpath(_p)).startswith(_norm):
+        del sys.modules[_name]
 
 import robot as rb          # noqa: E402
 import robot_body as rbb    # noqa: E402

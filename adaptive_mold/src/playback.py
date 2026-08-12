@@ -221,14 +221,21 @@ class Timeline(object):
         if self.pins is not None:
             out["heights"] = self.pins.heights_at(min(t, self.t_pins))
 
+        # 핀 구간·정지 구간에서도 로봇은 **출발 자세로 서 있다.**
+        # pose 를 None 으로 두면 로봇이 화면에서 사라진다 — 실제로는 대기 중이고,
+        # 정지 상태(t=0)로 두면 "로봇이 안 보인다"가 된다(실측으로 걸렸다).
+        start_pose = None
+        if self.robot is not None and self.robot.poses:
+            start_pose = dict(self.robot.poses[0])
+
         if t < self.t_pins:
             out["phase"] = "pins"
+            out["pose"] = start_pose
             return out
 
         if t < self.t_pins + self.dwell:
             out["phase"] = "dwell"
-            if self.robot is not None:
-                out["pose"] = dict(self.robot.poses[0]) if self.robot.poses else None
+            out["pose"] = start_pose
             return out
 
         if self.robot is None or not self.robot.poses:

@@ -26,9 +26,21 @@
 # 아닌 곳에서 Redraw 를 호출하게 되고, 그러면 Rhino 가 불안정해진다.
 # WinForms Timer 는 UI 스레드에서 Tick 한다.
 #
-# 두 가지 모드:
-#   play=False → 컨듀잇을 끄고, t 초 시점의 형상을 출력으로 낸다 (슬라이더 스크럽)
-#   play=True  → 컨듀잇이 벽시계 시간으로 그린다. 출력은 t 시점에 멈춘다
+# **컨듀잇은 항상 켜 둔다. 타이머만 재생 시에 돈다.**
+#   play=False → 일시정지. t 슬라이더로 그 시점의 형상을 그린다
+#   play=True  → 타이머가 벽시계 시간으로 프레임을 넘긴다
+#
+# 처음에는 정지 상태를 GH 출력 프리뷰에 맡겼는데, **GH 프리뷰가 메시 와이어를
+# 전부 그려서** 12만 면이 붉은 철망으로 보였다(실측). 컨듀잇은 셰이딩된 몸체를
+# 제 색으로 그린다. 두 모드가 같은 그림을 쓰는 편이 보기에도 낫고 코드도 하나다.
+#
+# 그래서 **자기 GH 프리뷰는 항상 끈다** — 켜 두면 컨듀잇 그림 위에 붉은 철망이
+# 겹친다. 반면 `solo`(다른 컴포넌트 프리뷰 끄기)는 **재생 중에만** 적용한다.
+# 정지 상태에서까지 남의 프리뷰를 꺼 두면 작업을 방해한다.
+#
+# **고아 컨듀잇 방지:** 컴포넌트를 지우면 솔루션이 돌지 않아 teardown 이 불리지
+# 않는다. 그래서 컨듀잇이 매 프레임 자기 컴포넌트가 아직 문서에 있는지 확인하고,
+# 없으면 스스로 꺼진다. 없으면 지운 뒤에도 뷰포트에 로봇이 남는다.
 #
 # Inputs:
 #   platform_path  str      repo root (필수)
@@ -186,11 +198,13 @@ def teardown():
         old["conduit"].Enabled = False
     except Exception:
         pass
-    try:
-        old["timer"].Stop()
-        old["timer"].Dispose()
-    except Exception:
-        pass
+    tm = old.get("timer")
+    if tm is not None:
+        try:
+            tm.Stop()
+            tm.Dispose()
+        except Exception:
+            pass
     # 프리뷰를 원래대로 — **끈 것을 반드시 되돌린다.** 여기서 빠뜨리면
     # 재생을 멈춘 뒤에도 캔버스가 아무것도 안 보이는 상태로 남는다.
     for obj, was in old.get("hidden_prev", []):
@@ -249,7 +263,7 @@ def hide_previews(others):
     return prev
 
 
-had_previous = teardown()
+teardown()
 
 
 # ── 입력 정리 ───────────────────────────────────────────
@@ -388,6 +402,17 @@ class PlayConduit(rd.DisplayConduit):
 
     def PostDrawObjects(self, e):
         st = self.state
+
+        # 컴포넌트가 지워졌으면 스스로 꺼진다 — 지우면 솔루션이 돌지 않아
+        # teardown 이 불리지 않고, 그대로 두면 뷰포트에 로봇이 남는다.
+        try:
+            if st["comp"].OnPingDocument() is None:
+                self.Enabled = False
+                return
+        except Exception:
+            self.Enabled = False
+            return
+
         sw = st["sw"]
         t0 = sw.Elapsed.TotalMilliseconds
 
@@ -434,13 +459,18 @@ class PlayConduit(rd.DisplayConduit):
             d.DrawCircle(f["roller"], C_ROLLER, 3)
 
         # HUD — 실제 시간으로 도는지 눈으로 확인할 수 있어야 한다
-        txt = [
-            "{:6.2f} / {:.1f} s   x{:.0f}   {}".format(
-                s["t"], st["duration"], st["time_scale"], s["phase"]),
-            "{:3.0f}%   {:.1f} fps   draw {:.2f} ms x{:.1f}".format(
+        if st["running"]:
+            head = "{:6.2f} / {:.1f} s   x{:.0f}   {}".format(
+                s["t"], st["duration"], st["time_scale"], s["phase"])
+            tail = "{:3.0f}%   {:.1f} fps   draw {:.2f} ms x{:.1f}".format(
                 s["progress"] * 100.0, st["fps_measured"],
-                st["draw_ms"], st["draws_per_frame"]),
-        ]
+                st["draw_ms"], st["draws_per_frame"])
+        else:
+            head = "||  {:6.2f} / {:.1f} s   {}".format(
+                s["t"], st["duration"], s["phase"])
+            tail = "{:3.0f}%   play 를 켜면 실제 속도로 돈다".format(
+                s["progress"] * 100.0)
+        txt = [head, tail]
         for i, line in enumerate(txt):
             d.Draw2dText(line, C_HUD, rg.Point2d(14, 16 + i * 18), False, 14)
 
@@ -448,7 +478,7 @@ class PlayConduit(rd.DisplayConduit):
         st["draws"] += 1
 
 
-# ── 재생 시작 / 스크럽 ──────────────────────────────────
+# ── 표시 (항상) + 재생 (play 일 때) ────────────────────
 
 frame = build_frame(float(t))
 s0 = frame["s"]
@@ -458,54 +488,63 @@ links = frame["links"]
 tcp = frame["tcp"]
 roller = frame["roller"]
 
-# 정지 상태에서는 출력으로 형상을 낸다 (재생 중에는 컨듀잇이 그린다)
+# 실물 메시 출력. **프리뷰로 보이는 것이 아니다** — 자기 프리뷰는 껐고 화면은
+# 컨듀잇이 그린다. 이 출력은 다른 컴포넌트로 넘겨 쓸 때를 위한 것이다.
 body = []
-if PARTS and frame["part_xf"] and not play:
+if PARTS and frame["part_xf"]:
     body = [m for _n, m in rbb.posed_meshes(
         PARTS, s0["pose"], base_plane=robot_base)]
 
+running = bool(play) and duration > 0
+
+all_pts = list(pin_bases)
+for b, h in zip(pin_bases, pin_h_end):
+    all_pts.append(b + base_plane.ZAxis * h)
+for ln in links:
+    all_pts.append(ln.From)
+    all_pts.append(ln.To)
+all_pts.extend(tgt_pts)
+# 실물 형상은 링크 선보다 크다 — 베이스 반경과 팔 두께만큼 더 잡는다
+all_pts.append(robot_base.Origin)
+bbox = rg.BoundingBox(all_pts) if all_pts else rg.BoundingBox.Unset
+if bbox.IsValid:
+    bbox.Inflate(1200.0 if PARTS else 500.0)
+
+state = {
+    "frame": frame,
+    "comp": ghenv.Component,
+    "parts": PARTS,
+    "material": rd.DisplayMaterial(C_BODY),
+    "sw": System.Diagnostics.Stopwatch.StartNew(),
+    "t0": float(t),
+    "duration": duration,
+    "time_scale": float(time_scale),
+    "loop": bool(loop),
+    "running": running,
+    "show_path": bool(show_path),
+    "tgt_pts": tgt_pts,
+    "bbox": bbox,
+    "draws": 0,
+    "draw_ms": 0.0,
+    "ticks": 0,
+    "fps_measured": 0.0,
+    "draws_per_frame": 0.0,
+    "last_fps_t": 0.0,
+    "last_fps_draws": 0,
+    "last_fps_ticks": 0,
+}
+
+# 자기 프리뷰는 항상 끈다(컨듀잇 그림 위에 붉은 철망이 겹친다).
+# 남의 프리뷰는 재생 중에만 끈다 — 정지 상태에서까지 꺼 두면 작업을 방해한다.
+state["hidden_prev"] = hide_previews(bool(solo) and running)
+
+conduit = PlayConduit(state)
+conduit.Enabled = True
+
+timer = None
 info_extra = []
 
-if play and duration > 0:
-    all_pts = list(pin_bases)
-    for b, h in zip(pin_bases, pin_h_end):
-        all_pts.append(b + base_plane.ZAxis * h)
-    for ln in links:
-        all_pts.append(ln.From)
-        all_pts.append(ln.To)
-    all_pts.extend(tgt_pts)
-    # 실물 형상은 링크 선보다 크다 — 베이스 반경과 팔 두께만큼 더 잡는다
-    all_pts.append(robot_base.Origin)
-    bbox = rg.BoundingBox(all_pts) if all_pts else rg.BoundingBox.Unset
-    if bbox.IsValid:
-        bbox.Inflate(1200.0 if PARTS else 500.0)
-
-    state = {
-        "frame": frame,
-        "parts": PARTS,
-        "material": rd.DisplayMaterial(C_BODY),
-        "sw": System.Diagnostics.Stopwatch.StartNew(),
-        "t0": float(t),
-        "duration": duration,
-        "time_scale": float(time_scale),
-        "loop": bool(loop),
-        "show_path": bool(show_path),
-        "tgt_pts": tgt_pts,
-        "bbox": bbox,
-        "draws": 0,
-        "draw_ms": 0.0,
-        "ticks": 0,
-        "fps_measured": 0.0,
-        "draws_per_frame": 0.0,
-        "last_fps_t": 0.0,
-        "last_fps_draws": 0,
-        "last_fps_ticks": 0,
-    }
-
-    state["hidden_prev"] = hide_previews(bool(solo))
-
-    conduit = PlayConduit(state)
-    conduit.Enabled = True
+if running:
 
     def on_tick(sender, args):
         st = state
@@ -546,11 +585,6 @@ if play and duration > 0:
     timer.Tick += on_tick
     timer.Start()
 
-    # handler 를 함께 담아 둔다 — 델리게이트만 남기면 GC 대상이 된다
-    sc.sticky[KEY] = {"conduit": conduit, "timer": timer,
-                      "state": state, "handler": on_tick,
-                      "hidden_prev": state["hidden_prev"]}
-
     # Windows 타이머는 시스템 틱(15.625 ms) 배수로 스냅된다. 40 ms 를 요청하면
     # 실제로는 46.9 ms 로 돌아 21.3 Hz 가 된다(실측 21.2). 그래서 요청값과
     # 실효값을 같이 적는다 — HUD 의 fps 가 낮게 보이는 것이 버그가 아니다.
@@ -561,10 +595,10 @@ if play and duration > 0:
         "  타이머 {} ms 요청 -> 실효 {:.1f} ms ({:.1f} fps)".format(
             timer.Interval, snapped, 1000.0 / snapped),
         "             <- Windows 타이머는 15.625 ms 배수로 스냅된다",
-        "  배속 x{:.1f}  반복 {}  프리뷰 {}개 끔".format(
+        "  배속 x{:.1f}  반복 {}  남의 프리뷰 {}개 끔".format(
             float(time_scale), "예" if loop else "아니오",
-            len(state["hidden_prev"])),
-        "  play 를 끄면 멈추고 t 초 시점 형상이 출력으로 나온다",
+            max(0, len(state["hidden_prev"]) - 1)),
+        "  play 를 끄면 그 자리에 멈춘 그림이 남는다",
         "",
         "재생 시각은 매 틱마다 스톱워치에서 다시 계산한다 — 프레임을 놓쳐도",
         "누적 오차가 생기지 않는다 (실측: 6.1초 구간에서 오차 0.5%)",
@@ -572,12 +606,17 @@ if play and duration > 0:
 else:
     info_extra = [
         "",
-        "정지 — t={:.2f} s 시점 형상을 출력으로 낸다 (슬라이더로 스크럽)".format(
+        "일시정지 — t={:.2f} s 시점을 뷰포트에 그린다 (슬라이더로 스크럽)".format(
             float(t)),
-        "  play 를 켜면 벽시계 시간으로 재생한다",
+        "  컨듀잇은 켜져 있다. GH 프리뷰가 아니라 이쪽이 그린다 —",
+        "  GH 프리뷰는 메시 와이어를 다 그려서 12만 면이 철망으로 보인다",
+        "  play 를 켜면 벽시계 시간으로 돈다",
     ]
-    if had_previous:
-        info_extra.append("  (직전 재생을 정리했다)")
+
+# handler·conduit·timer 를 함께 담아 둔다 — 델리게이트만 남기면 GC 대상이 된다
+sc.sticky[KEY] = {"conduit": conduit, "timer": timer, "state": state,
+                  "handler": (on_tick if running else None),
+                  "hidden_prev": state["hidden_prev"]}
 
 
 # ── 리포트 ──────────────────────────────────────────────

@@ -15,7 +15,18 @@ import sys
 
 import Rhino.Geometry as rg
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+_SRC = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.insert(0, _SRC)
+
+# **모듈 캐시를 비운다.** Rhino 의 파이썬은 프로세스 수명 동안 모듈을 캐시하므로,
+# src/ 를 고쳐도 다시 돌리면 옛 모듈이 쓰인다 — 고친 뒤 테스트가 그대로 실패하고
+# (또는 그대로 통과하고) 원인을 딴 데서 찾게 된다. 실측으로 걸렸다.
+# 이름으로 지우면 stdlib 의 동명 모듈까지 날아가므로 __file__ 경로로 고른다.
+_norm = os.path.normcase(_SRC)
+for _name in list(sys.modules.keys()):
+    _p = getattr(sys.modules.get(_name), "__file__", None)
+    if _p and os.path.normcase(os.path.normpath(_p)).startswith(_norm):
+        del sys.modules[_name]
 
 import robot as rb           # noqa: E402
 import playback as pb        # noqa: E402
@@ -226,6 +237,35 @@ def test_timeline_phases():
     print("PASS: test_timeline_phases")
 
 
+def test_robot_visible_in_every_phase():
+    """어느 시점에도 로봇 자세가 있어야 한다 — 없으면 화면에서 사라진다.
+
+    핀이 올라가는 동안 로봇은 대기 중이지 없는 게 아니다. pose 를 None 으로 두면
+    정지 상태(t=0)에서 "로봇이 안 보인다"가 된다 — 실측으로 걸린 결함이다.
+    """
+    tl = _timeline()
+    first = tl.robot.poses[0]
+    for t in (0.0, 0.5, 1.9, 2.0, 2.5, 2.9, 3.0, 5.0, 8.6, 99.0):
+        p = tl.sample(t)["pose"]
+        assert p is not None, "t={} 에서 자세가 없다".format(t)
+
+    # 출발 전에는 첫 자세로 서 있어야 한다 (엉뚱한 자세가 아니라)
+    for t in (0.0, 1.9, 2.9):
+        p = tl.sample(t)["pose"]
+        for j in rb.JOINT_NAMES:
+            assert close(p[j], first[j]), (t, j, p[j], first[j])
+    print("PASS: test_robot_visible_in_every_phase")
+
+
+def test_pins_only_has_no_pose():
+    """로봇을 연결하지 않았으면 자세는 없다 — 없는 것을 만들어내지 않는다."""
+    tl = pb.build(pin_bases=_bases(2), pin_h_start=[0.0, 0.0],
+                  pin_h_end=[100.0, 0.0], pin_speed=50.0, dwell=1.0)
+    for t in (0.0, 1.0, 2.5):
+        assert tl.sample(t)["pose"] is None, t
+    print("PASS: test_pins_only_has_no_pose")
+
+
 def test_timeline_pins_stay_up_during_robot():
     """로봇이 도는 동안 핀은 목표 높이에 그대로 있어야 한다.
 
@@ -278,6 +318,8 @@ TESTS = [
     test_poses_from_flat,
     test_timeline_total,
     test_timeline_phases,
+    test_robot_visible_in_every_phase,
+    test_pins_only_has_no_pose,
     test_timeline_pins_stay_up_during_robot,
     test_timeline_progress_monotonic,
     test_pins_only_timeline,
