@@ -43,9 +43,11 @@ TOL = 0.001
 
 class RollerPathResult(object):
     def __init__(self):
-        self.paths = []          # 롤러 중심 경로 (Curve) — 진행 순서대로
+        self.paths = []          # 성형 구간만 (Curve) — 진행 순서대로
+        self.paths_air = []      # 공중 구간 (접근·후퇴·이동)
+        self.path_full = None    # 전체 툴패스 하나로 이은 PolyCurve
         self.targets = []        # [[Plane, ...], ...] 경로별 로봇 타겟
-        self.move_kinds = []     # targets와 같은 구조. "approach"/"form"/"retract"
+        self.move_kinds = []     # targets와 같은 구조
         self.roller_lines = []   # 각 경로 시작점의 롤러 축 표시선 (Line)
         self.contact = []        # 경로별 접촉점 목록 (Point3d)
         self.info = {}
@@ -200,6 +202,46 @@ def _offset_iso(srf, iso_dir, const_param, dist, up, samples):
     return rg.Curve.CreateInterpolatedCurve(pts, 3), contact, normals, tangents
 
 
+def _uv(travel_dir, t_param, a_param):
+    """(진행 파라미터, 축 파라미터) → (u, v).
+
+    travel_dir=1 이면 아이소커브가 v를 따라 변하므로 축 파라미터가 u다.
+    이 대응을 뒤집으면 이동 경로가 엉뚱한 방향으로 간다.
+    """
+    if travel_dir == 0:
+        return t_param, a_param
+    return a_param, t_param
+
+
+def _clear_point(srf, travel_dir, t_param, a_param, dist, up):
+    """몰드면 위 (t,a) 지점에서 법선으로 dist 띄운 점."""
+    u, v = _uv(travel_dir, t_param, a_param)
+    n = _up_normal(srf, u, v, up)
+    if n is None:
+        return None
+    return srf.PointAt(u, v) + n * dist
+
+
+def _clear_leg(srf, travel_dir, dist, up, t_from, t_to, a_from, a_to,
+               approx_len):
+    """몰드면에서 dist를 유지하는 이동 구간(공중 경로) 점 목록.
+
+    **직선으로 잇지 않는다.** 두 점을 직선으로 이으면 볼록한 곡면 위에서는
+    현(chord)이 면 아래로 파고들어 판재나 몰드를 친다. 지금 패널은 축 방향이
+    직선이라 우연히 안전하지만, 이중곡면에서는 바로 사고가 된다.
+    """
+    n_s = max(2, int(approx_len / 60.0) + 1)
+    pts = []
+    for k in range(n_s + 1):
+        f = k / float(n_s)
+        t = t_from + (t_to - t_from) * f
+        a = a_from + (a_to - a_from) * f
+        p = _clear_point(srf, travel_dir, t, a, dist, up)
+        if p is not None:
+            pts.append(p)
+    return pts
+
+
 def order_paths(values, mode="center-alt"):
     """패스를 어떤 순서로 지날지.
 
@@ -282,8 +324,10 @@ def generate_roller_paths(mold_srf, base_plane=None, sheet_t=1.5, roller_d=60.0,
     consts = order_paths(consts, mode)
 
     r_off = sheet_t + roller_d / 2.0
+    clr = clearance if (clearance and clearance > 0) else 0.0
     seat = []
     idx = 0                      # 실행 순서 index — 지그재그 방향 판정에 쓴다
+    segs = []                    # 성형 구간 정보 — 조립 단계에서 이어 붙인다
 
     for p in range(int(max(1, passes))):
         # 점진 가압: 마지막 패스만 몰드면까지 간다
@@ -317,9 +361,6 @@ def generate_roller_paths(mold_srf, base_plane=None, sheet_t=1.5, roller_d=60.0,
                 crv = crv.DuplicateCurve()
                 crv.Reverse()
 
-            res.paths.append(crv)
-            res.contact.append(contact)
-
             planes = []
             for q, n, tan in zip(contact, normals, tangents):
                 z = rg.Vector3d(n)
@@ -332,34 +373,97 @@ def generate_roller_paths(mold_srf, base_plane=None, sheet_t=1.5, roller_d=60.0,
                 x.Unitize()
                 planes.append(rg.Plane(q + n * r_off, x, y))
 
-            # 접근·후퇴 — 이것이 없으면 다음 패스로 넘어갈 때 롤러가 판재를
-            # 누른 채 가로질러 긁는다. 성형 자세를 유지한 채 법선으로만 띄운다.
-            kinds = ["form"] * len(planes)
-            if planes and clearance and clearance > 0:
-                lift = rg.Vector3d(planes[0].ZAxis)
-                lift.Reverse()
-                ap = rg.Plane(planes[0])
-                ap.Origin = planes[0].Origin + lift * clearance
-                rt = rg.Plane(planes[-1])
-                rt.Origin = planes[-1].Origin + rg.Vector3d(
-                    -planes[-1].ZAxis.X, -planes[-1].ZAxis.Y,
-                    -planes[-1].ZAxis.Z) * clearance
-                planes = [ap] + planes + [rt]
-                kinds = ["approach"] + kinds + ["retract"]
+            if not planes:
+                idx += 1
+                continue
 
-            res.targets.append(planes)
-            res.move_kinds.append(kinds)
-
-            if planes:
-                pl = planes[0]
-                res.roller_lines.append(rg.Line(
-                    pl.Origin - pl.YAxis * (roller_w / 2.0),
-                    pl.Origin + pl.YAxis * (roller_w / 2.0)))
+            segs.append({
+                "crv": crv,
+                "planes": planes,
+                "contact": contact,
+                "a": c,
+                "t_start": dom_travel.T1 if reverse else dom_travel.T0,
+                "t_end": dom_travel.T0 if reverse else dom_travel.T1,
+            })
 
             e = seat_error(srf, c, travel_dir, roller_w, up)
             if e is not None:
                 seat.append(e)
             idx += 1
+
+    # ── 조립 ──────────────────────────────────────────────
+    # 성형 구간만 내보내면 툴패스가 끊긴다. 접근 → 성형 → 후퇴 → 이동 →
+    # 다음 접근이 하나로 이어져야 로봇 경로다.
+    full = rg.PolyCurve()
+    links = []
+
+    for i, s in enumerate(segs):
+        planes = list(s["planes"])
+        res.paths.append(s["crv"])
+        res.contact.append(s["contact"])
+        res.roller_lines.append(rg.Line(
+            planes[0].Origin - planes[0].YAxis * (roller_w / 2.0),
+            planes[0].Origin + planes[0].YAxis * (roller_w / 2.0)))
+
+        kinds = ["form"] * len(planes)
+        seq = list(planes)
+
+        if clr > 0:
+            # 접근·후퇴 — 성형 자세를 유지한 채 법선으로만 띄운다
+            up_first = -planes[0].ZAxis
+            up_last = -planes[-1].ZAxis
+            ap = rg.Plane(planes[0])
+            ap.Origin = planes[0].Origin + up_first * clr
+            rt = rg.Plane(planes[-1])
+            rt.Origin = planes[-1].Origin + up_last * clr
+            seq = [ap] + seq + [rt]
+            kinds = ["approach"] + kinds + ["retract"]
+
+            line_in = rg.LineCurve(ap.Origin, planes[0].Origin)
+            line_out = rg.LineCurve(planes[-1].Origin, rt.Origin)
+            res.paths_air.append(line_in)
+            res.paths_air.append(line_out)
+            full.Append(line_in)
+            full.Append(s["crv"])
+            full.Append(line_out)
+        else:
+            full.Append(s["crv"])
+
+        # 다음 패스로 가는 이동 — 몰드면에서 clr을 유지한다
+        if clr > 0 and i < len(segs) - 1:
+            nxt = segs[i + 1]
+            legs = [
+                # ① 축 방향으로 옆 패스까지
+                (s["t_end"], s["t_end"], s["a"], nxt["a"]),
+                # ② 진행 방향 끝이 다르면(단방향 진행) 그 끝까지
+                (s["t_end"], nxt["t_start"], nxt["a"], nxt["a"]),
+            ]
+            for t0, t1, a0, a1 in legs:
+                if abs(t1 - t0) < 1e-9 and abs(a1 - a0) < 1e-9:
+                    continue
+                approx = abs(a1 - a0) + abs(t1 - t0)
+                pts = _clear_leg(srf, travel_dir, r_off + clr, up,
+                                 t0, t1, a0, a1, approx)
+                if len(pts) < 2:
+                    continue
+                leg = rg.Curve.CreateInterpolatedCurve(pts, 3) if len(pts) > 3 \
+                    else rg.PolylineCurve(pts)
+                if leg is None:
+                    continue
+                res.paths_air.append(leg)
+                links.append(leg.GetLength())
+                full.Append(leg)
+                # 이동 구간 타겟 — 후퇴 자세를 유지한다
+                for q in pts[1:]:
+                    pl = rg.Plane(seq[-1])
+                    pl.Origin = q
+                    seq.append(pl)
+                    kinds.append("link")
+
+        res.targets.append(seq)
+        res.move_kinds.append(kinds)
+
+    res.path_full = full if full.SegmentCount > 0 else None
 
     # 실제 패스 간격 — 매개변수 등분이 공간 등분과 다를 수 있으므로 실측한다
     gaps = []
@@ -374,15 +478,11 @@ def generate_roller_paths(mold_srf, base_plane=None, sheet_t=1.5, roller_d=60.0,
         if rc[0]:
             gaps.append(rc[1].DistanceTo(rc[2]))
 
-    # 패스 사이 이동거리 — 후퇴 지점에서 다음 접근 지점까지.
-    # 지그재그가 실제로 이 값을 줄이는지 확인하기 위한 실측이다.
-    links = []
-    for a, b in zip(res.targets, res.targets[1:]):
-        if a and b:
-            links.append(a[-1].Origin.DistanceTo(b[0].Origin))
-
     n_form = sum(1 for ks in res.move_kinds for k in ks if k == "form")
     n_air = sum(1 for ks in res.move_kinds for k in ks if k != "form")
+
+    len_form = sum(c.GetLength() for c in res.paths)
+    len_air = sum(c.GetLength() for c in res.paths_air)
 
     res.info = {
         "order_mode": mode,
@@ -393,6 +493,13 @@ def generate_roller_paths(mold_srf, base_plane=None, sheet_t=1.5, roller_d=60.0,
         "link_min": min(links) if links else None,
         "link_max": max(links) if links else None,
         "link_total": sum(links) if links else 0.0,
+        "len_form": len_form,
+        "len_air": len_air,
+        "len_total": len_form + len_air,
+        "full_segments": res.path_full.SegmentCount if res.path_full else 0,
+        "full_continuous": (res.path_full is not None
+                            and not res.path_full.IsClosed
+                            and res.path_full.IsValid),
         "travel": diag.get("travel_param", "?"),
         "travel_diag": diag,
         "n_paths_per_pass": n_paths,

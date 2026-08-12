@@ -20,9 +20,12 @@
 #   compute        bool     False면 계산하지 않는다
 #
 # Outputs:
-#   paths          롤러 중심 경로 (진행 순서대로)
-#   targets        로봇 타겟 Plane (경로 순서대로 평탄화)
-#   move_kind      targets와 같은 순서의 구간 종류 (approach/form/retract)
+#   path_full      전체 툴패스 하나 (성형 + 접근/후퇴/이동이 이어진 것)
+#   paths          성형 구간만
+#   path_air       공중 구간만 (접근·후퇴·이동)
+#   targets        로봇 타겟 Plane (실행 순서대로 평탄화)
+#   move_kind      targets와 같은 순서의 구간 종류
+#                  (approach / form / retract / link)
 #   roller_lines   각 경로 시작점의 롤러 축 표시선
 #   contact        판재-롤러 접촉점
 #   info           진단 리포트
@@ -70,7 +73,9 @@ if base_plane is None:
     base_plane = rg.Plane.WorldXY
 
 
+path_full = None
 paths = []
+path_air = []
 targets = []
 move_kind = []
 roller_lines = []
@@ -94,7 +99,9 @@ if compute and mold_srf is not None:
         order_mode=str(order_mode),
     )
 
+    path_full = r.path_full
     paths = r.paths
+    path_air = r.paths_air
     roller_lines = r.roller_lines
     for group in r.targets:
         targets.extend(group)
@@ -127,7 +134,12 @@ if compute and mold_srf is not None:
                 "{:.0f} ~ {:.0f}".format(d["link_min"], d["link_max"])
                 if d["link_min"] is not None else "?",
                 d["link_total"]),
-            "             <- 후퇴점에서 다음 접근점까지. 이 구간은 공중 이동이다",
+            "             <- 몰드면에서 간격을 유지하는 곡선이다. 직선으로 이으면",
+            "                볼록면 위에서 현이 면 아래로 파고든다",
+            "",
+            "전체 경로:   {:.0f} mm  (성형 {:.0f} + 공중 {:.0f})  세그먼트 {}개".format(
+                d["len_total"], d["len_form"], d["len_air"], d["full_segments"]),
+            "             <- path_full 이 처음부터 끝까지 이어진 하나의 곡선이다",
             "간격:        설정 {:.1f} mm  실측 {} mm".format(
                 d["stepover_set"],
                 "{:.1f} ~ {:.1f}".format(so[0], so[1]) if so else "?"),
