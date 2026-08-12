@@ -71,10 +71,9 @@ if compute and targets:
     # 웹 시뮬레이터가 베드를 X=1.4m에 두고 도달 스위트스폿을 확인한 값에서 왔다.
     base_given = robot_base is not None
     if robot_base is None:
-        bb = rg.BoundingBox([t.Origin for t in tgts])
-        c = bb.Center
-        robot_base = rg.Plane(rg.Point3d(c.X - 1900.0, c.Y, 0.0),
-                              rg.Vector3d.XAxis, rg.Vector3d.YAxis)
+        # 기본값은 robot.py 한 곳에 있다 — AMv1 Play 가 같은 것을 써야 로봇이
+        # 계산된 위치에 그려진다
+        robot_base = rb.default_base_plane(tgts)
 
     picked = list(range(0, len(tgts), int(step)))
     sampled = [tgts[i] for i in picked]
@@ -146,8 +145,12 @@ if compute and targets:
         "             <- 원통 롤러는 축 부호가 무의미하다. 이 자유도를 쓰지",
         "                않으면 지그재그마다 손목이 180도씩 감긴다",
         "",
-        "사이클 타임: {:.1f} 초 ({:.1f} 분) — 가감속 무시한 하한".format(
+        "관절 이동시간: {:.1f} 초 ({:.1f} 분) — 전 구간을 관절 최대속도로 갔을 때".format(
             seconds, seconds / 60.0),
+        "             <- 이것을 사이클 타임으로 읽지 말 것. 성형 구간의 속도는",
+        "                로봇 능력이 아니라 공정(가열 판재의 이송 속도)이 정한다.",
+        "                실제 시간은 AMv1 Play 의 duration 을 볼 것 —",
+        "                실측 feed 50 mm/s 에서 592.8 초로 13.8배다.",
     ]
     if kinds:
         lines.append("")

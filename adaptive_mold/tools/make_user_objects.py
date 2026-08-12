@@ -58,6 +58,7 @@ COMPONENTS = [
     ("AMv1 RollerPath", SUB, "draw_path"),
     ("AMv1 PathFrames", SUB, "draw_frames"),
     ("AMv1 Robot",      SUB, "draw_robot"),
+    ("AMv1 Play",       SUB, "draw_play"),
 ]
 
 
@@ -143,8 +144,22 @@ def draw_robot():
     return bmp
 
 
+def draw_play():
+    """재생 삼각형 + 움직임 호."""
+    bmp, g = _canvas()
+    tri = System.Array[sd.PointF]([
+        sd.PointF(7, 3), sd.PointF(7, 21), sd.PointF(20, 12)])
+    g.FillPolygon(sd.SolidBrush(ACC), tri)
+    mp = sd.Pen(SOFT, 1.6)
+    for x in (1.0, 4.0):                                   # 속도선
+        g.DrawLine(mp, x, 8.0, x, 16.0)
+    g.Dispose()
+    return bmp
+
+
 DRAW = {{"draw_mold": draw_mold, "draw_path": draw_path,
-        "draw_frames": draw_frames, "draw_robot": draw_robot}}
+        "draw_frames": draw_frames, "draw_robot": draw_robot,
+        "draw_play": draw_play}}
 
 folder = ghk.Folders.DefaultUserObjectFolder
 lines.append("folder: %s" % folder)

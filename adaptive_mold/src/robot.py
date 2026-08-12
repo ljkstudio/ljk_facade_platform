@@ -154,6 +154,28 @@ def tcp_plane_mm(pose_deg):
     return pl
 
 
+DEFAULT_BASE_OFFSET_MM = 1900.0
+
+
+def default_base_plane(target_planes):
+    """robot_base 를 주지 않았을 때 쓰는 베이스 — 타겟 박스 중심에서 -X로.
+
+    웹 시뮬레이터가 베드를 X=1.4 m 에 두고 도달 스위트스폿을 확인한 값에서
+    왔고, 이 저장소에서 base_x 를 -1400/-1300/-1200 으로 훑어 -1400(= 중심에서
+    1900) 이 최선인 것을 실측했다.
+
+    **표시 컴포넌트와 계산 컴포넌트가 이 값을 각자 갖고 있으면 안 된다.**
+    한쪽만 고치면 로봇이 계산된 위치와 다른 곳에 그려지는데, 화면은 그럴듯해서
+    틀린 줄 모른다. 그래서 여기 한 곳에 둔다.
+    """
+    pts = [p.Origin for p in target_planes if p is not None]
+    if not pts:
+        return rg.Plane.WorldXY
+    c = rg.BoundingBox(pts).Center
+    return rg.Plane(rg.Point3d(c.X - DEFAULT_BASE_OFFSET_MM, c.Y, 0.0),
+                    rg.Vector3d.XAxis, rg.Vector3d.YAxis)
+
+
 def link_lines_mm(pose_deg, base_plane=None):
     """관절 피벗을 이은 선 + 플랜지→TCP 선 (mm). 애니메이션 표시용."""
     frames = joint_frames(pose_deg)

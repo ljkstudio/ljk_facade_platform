@@ -34,8 +34,10 @@ Desktop.ini
 *.3dmbak
 *.ghc
 
-# 픽스처 생성 로그 (매 실행 재생성 — 내용은 docs/journal에 기록)
+# 도구 실행 로그 (매 실행 재생성 — 판정 근거는 docs/journal에 기록)
 plugin/fixtures/_dump_log.txt
+adaptive_mold/tests/_*_log.txt
+adaptive_mold/grasshopper/_*_log.txt
 
 # Logs / temp
 *.log
