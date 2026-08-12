@@ -45,6 +45,7 @@ class RollerPathResult(object):
     def __init__(self):
         self.paths = []          # 롤러 중심 경로 (Curve) — 진행 순서대로
         self.targets = []        # [[Plane, ...], ...] 경로별 로봇 타겟
+        self.move_kinds = []     # targets와 같은 구조. "approach"/"form"/"retract"
         self.roller_lines = []   # 각 경로 시작점의 롤러 축 표시선 (Line)
         self.contact = []        # 경로별 접촉점 목록 (Point3d)
         self.info = {}
@@ -199,20 +200,34 @@ def _offset_iso(srf, iso_dir, const_param, dist, up, samples):
     return rg.Curve.CreateInterpolatedCurve(pts, 3), contact, normals, tangents
 
 
-def _order_center_out(values):
-    """중앙에서 시작해 좌우로 번갈아 나가는 순서.
+def order_paths(values, mode="center-alt"):
+    """패스를 어떤 순서로 지날지.
 
     주름은 자유 경계에서 시작해 안으로 밀려 들어온다. 중앙을 먼저 앉히고
     바깥으로 밀어내면 여분 재료가 경계로 빠져나갈 길이 남는다. 한쪽 끝에서
     시작하면 그 여분이 반대쪽에 쌓인다.
+
+    다만 순서가 공중 이동거리를 크게 바꾼다(실측치는 info에 나온다).
+
+    center-alt  중앙에서 좌우 번갈아. 재료 흐름이 대칭이지만 홉이 계속 커진다
+    center-half 중앙→한쪽 끝, 다시 중앙→반대쪽. 각 반쪽은 여전히 밖으로
+                밀어내고, 긴 홉이 한 번(중앙 복귀)으로 줄어든다
+    sequential  한쪽 끝에서 순서대로. 이동은 최소지만 여분이 반대쪽에 쌓인다
     """
-    idx = list(range(len(values)))
-    mid = len(values) // 2
+    n = len(values)
+    mid = n // 2
+
+    if mode == "sequential":
+        return list(values)
+
+    if mode == "center-half":
+        return list(values[mid:]) + list(reversed(values[:mid]))
+
     order = [mid]
     step = 1
-    while len(order) < len(values):
+    while len(order) < n:
         for s in (mid - step, mid + step):
-            if 0 <= s < len(values) and s not in order:
+            if 0 <= s < n and s not in order:
                 order.append(s)
         step += 1
     return [values[i] for i in order]
@@ -220,7 +235,8 @@ def _order_center_out(values):
 
 def generate_roller_paths(mold_srf, base_plane=None, sheet_t=1.5, roller_d=60.0,
                           roller_w=80.0, stepover=0.0, passes=1,
-                          axis_mode="auto", start_center=True, samples=40):
+                          axis_mode="auto", start_center=True, samples=40,
+                          zigzag=True, clearance=30.0, order_mode=None):
     """몰드면 위의 롤러 패스를 만든다.
 
     mold_srf : 성형면(= 내열 시트 상면). Surface / Brep / BrepFace
@@ -260,11 +276,14 @@ def generate_roller_paths(mold_srf, base_plane=None, sheet_t=1.5, roller_d=60.0,
 
     consts = [dom_axis.T0 + dom_axis.Length * i / float(n_paths - 1)
               for i in range(n_paths)]
-    if start_center:
-        consts = _order_center_out(consts)
+    # order_mode가 주어지면 그것이 우선. 없으면 기존 start_center 동작 유지.
+    mode = order_mode if order_mode else ("center-alt" if start_center
+                                          else "sequential")
+    consts = order_paths(consts, mode)
 
     r_off = sheet_t + roller_d / 2.0
     seat = []
+    idx = 0                      # 실행 순서 index — 지그재그 방향 판정에 쓴다
 
     for p in range(int(max(1, passes))):
         # 점진 가압: 마지막 패스만 몰드면까지 간다
@@ -286,6 +305,18 @@ def generate_roller_paths(mold_srf, base_plane=None, sheet_t=1.5, roller_d=60.0,
                 if crv_mid is not None:
                     crv = crv_mid
 
+            # 왕복(지그재그) — 홀수 번째 패스는 거꾸로 간다.
+            # **접선도 함께 뒤집는다.** 순서만 뒤집으면 타겟의 XAxis가 실제
+            # 진행 방향과 반대가 되어, 자세는 그대로인데 방향만 바뀐 경로가
+            # 나온다. 눈으로는 멀쩡해 보이고 로봇에서 틀어진다.
+            reverse = bool(zigzag) and (idx % 2 == 1)
+            if reverse:
+                contact = list(reversed(contact))
+                normals = list(reversed(normals))
+                tangents = [-t for t in reversed(tangents)]
+                crv = crv.DuplicateCurve()
+                crv.Reverse()
+
             res.paths.append(crv)
             res.contact.append(contact)
 
@@ -300,7 +331,24 @@ def generate_roller_paths(mold_srf, base_plane=None, sheet_t=1.5, roller_d=60.0,
                 x = rg.Vector3d.CrossProduct(y, z)
                 x.Unitize()
                 planes.append(rg.Plane(q + n * r_off, x, y))
+
+            # 접근·후퇴 — 이것이 없으면 다음 패스로 넘어갈 때 롤러가 판재를
+            # 누른 채 가로질러 긁는다. 성형 자세를 유지한 채 법선으로만 띄운다.
+            kinds = ["form"] * len(planes)
+            if planes and clearance and clearance > 0:
+                lift = rg.Vector3d(planes[0].ZAxis)
+                lift.Reverse()
+                ap = rg.Plane(planes[0])
+                ap.Origin = planes[0].Origin + lift * clearance
+                rt = rg.Plane(planes[-1])
+                rt.Origin = planes[-1].Origin + rg.Vector3d(
+                    -planes[-1].ZAxis.X, -planes[-1].ZAxis.Y,
+                    -planes[-1].ZAxis.Z) * clearance
+                planes = [ap] + planes + [rt]
+                kinds = ["approach"] + kinds + ["retract"]
+
             res.targets.append(planes)
+            res.move_kinds.append(kinds)
 
             if planes:
                 pl = planes[0]
@@ -311,6 +359,7 @@ def generate_roller_paths(mold_srf, base_plane=None, sheet_t=1.5, roller_d=60.0,
             e = seat_error(srf, c, travel_dir, roller_w, up)
             if e is not None:
                 seat.append(e)
+            idx += 1
 
     # 실제 패스 간격 — 매개변수 등분이 공간 등분과 다를 수 있으므로 실측한다
     gaps = []
@@ -325,7 +374,25 @@ def generate_roller_paths(mold_srf, base_plane=None, sheet_t=1.5, roller_d=60.0,
         if rc[0]:
             gaps.append(rc[1].DistanceTo(rc[2]))
 
+    # 패스 사이 이동거리 — 후퇴 지점에서 다음 접근 지점까지.
+    # 지그재그가 실제로 이 값을 줄이는지 확인하기 위한 실측이다.
+    links = []
+    for a, b in zip(res.targets, res.targets[1:]):
+        if a and b:
+            links.append(a[-1].Origin.DistanceTo(b[0].Origin))
+
+    n_form = sum(1 for ks in res.move_kinds for k in ks if k == "form")
+    n_air = sum(1 for ks in res.move_kinds for k in ks if k != "form")
+
     res.info = {
+        "order_mode": mode,
+        "zigzag": bool(zigzag),
+        "clearance": clearance,
+        "form_targets": n_form,
+        "air_targets": n_air,
+        "link_min": min(links) if links else None,
+        "link_max": max(links) if links else None,
+        "link_total": sum(links) if links else 0.0,
         "travel": diag.get("travel_param", "?"),
         "travel_diag": diag,
         "n_paths_per_pass": n_paths,

@@ -13,12 +13,16 @@
 #   stepover       float    패스 간격, 0이면 roller_w*0.5
 #   passes         int      점진 가압 패스 수, 없으면 1
 #   axis_mode      str      auto | u | v  (진행 방향 강제)
-#   start_center   bool     중앙에서 시작해 좌우 교대, 없으면 True
+#   start_center   bool     (구버전 호환) order_mode가 있으면 무시됨
+#   order_mode     str      center-half | center-alt | sequential
+#   zigzag         bool     왕복 진행, 없으면 True
+#   clearance      float    접근·후퇴 높이, 없으면 30
 #   compute        bool     False면 계산하지 않는다
 #
 # Outputs:
 #   paths          롤러 중심 경로 (진행 순서대로)
 #   targets        로봇 타겟 Plane (경로 순서대로 평탄화)
+#   move_kind      targets와 같은 순서의 구간 종류 (approach/form/retract)
 #   roller_lines   각 경로 시작점의 롤러 축 표시선
 #   contact        판재-롤러 접촉점
 #   info           진단 리포트
@@ -56,6 +60,11 @@ _default("stepover", 0.0)
 _default("passes", 1, positive=True)
 _default("axis_mode", "auto")
 _default("start_center", True)
+_default("zigzag", True)
+_default("clearance", 30.0)
+# center-half 가 기본 — 중앙에서 바깥으로 미는 논리를 유지하면서 공중 이동이
+# center-alt의 1/8.8이다 (실측 1,480 vs 13,000 mm).
+_default("order_mode", "center-half")
 
 if base_plane is None:
     base_plane = rg.Plane.WorldXY
@@ -63,6 +72,7 @@ if base_plane is None:
 
 paths = []
 targets = []
+move_kind = []
 roller_lines = []
 contact = []
 info = ""
@@ -79,12 +89,17 @@ if compute and mold_srf is not None:
         passes=int(passes),
         axis_mode=str(axis_mode),
         start_center=bool(start_center),
+        zigzag=bool(zigzag),
+        clearance=clearance,
+        order_mode=str(order_mode),
     )
 
     paths = r.paths
     roller_lines = r.roller_lines
     for group in r.targets:
         targets.extend(group)
+    for group in r.move_kinds:
+        move_kind.extend(group)
     for group in r.contact:
         contact.extend(group)
 
@@ -101,9 +116,18 @@ if compute and mold_srf is not None:
             "             <- 롤러는 진행 방향으로만 굽힘을 준다.",
             "                축 방향에 곡률이 있으면 접촉선이 앉지 않는다.",
             "",
-            "패스:        {}본 x {}회 = {}개  (타겟 {}개)".format(
-                d["n_paths_per_pass"], d["passes"], d["path_count"],
-                d["target_count"]),
+            "패스:        {}본 x {}회 = {}개".format(
+                d["n_paths_per_pass"], d["passes"], d["path_count"]),
+            "타겟:        성형 {}개 + 이동 {}개 = {}개".format(
+                d["form_targets"], d["air_targets"], d["target_count"]),
+            "진행:        {}  순서 {}  (접근·후퇴 높이 {:.0f} mm)".format(
+                "왕복 지그재그" if d["zigzag"] else "단방향",
+                d["order_mode"], d["clearance"]),
+            "패스간 이동: {} mm  합계 {:.0f} mm".format(
+                "{:.0f} ~ {:.0f}".format(d["link_min"], d["link_max"])
+                if d["link_min"] is not None else "?",
+                d["link_total"]),
+            "             <- 후퇴점에서 다음 접근점까지. 이 구간은 공중 이동이다",
             "간격:        설정 {:.1f} mm  실측 {} mm".format(
                 d["stepover_set"],
                 "{:.1f} ~ {:.1f}".format(so[0], so[1]) if so else "?"),
