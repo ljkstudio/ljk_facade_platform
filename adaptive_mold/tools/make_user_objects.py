@@ -13,6 +13,13 @@ GDI+로 24x24를 그리므로 이 파일이 곧 아이콘의 정본이다.
 `gh_scripts/*.py` 를 고치면 이 도구를 다시 돌려야 리본의 것도 갱신된다.
 캔버스의 것은 apply 계열 도구로, 리본의 것은 이 도구로 — 경로가 둘이다.
 
+**`ComponentServer.LoadExternalFiles()` 를 호출하지 말 것.** Grasshopper가
+UserObjects 폴더 변경을 스스로 반영하므로 불필요하고, 호출하면 **모든 User
+Object가 새 GUID로 다시 등록되어 팔레트에 중복으로 쌓인다**(실측: LJKS 6 → 12,
+사용자 소유 항목까지 복제됨). `ClearStaleUserObjects()` 로는 정리되지 않는다.
+중복이 생겼으면 `ComponentServer.ObjectProxies`(List)에서 이름 기준으로
+제거하거나 Rhino를 재시작해야 한다 — 디스크는 멀쩡하다.
+
 선결 조건: Rhino 8 + `mcpstart`, 그리고 대상 컴포넌트가 캔버스에 있어야 한다.
 
 사용:
@@ -33,7 +40,9 @@ except Exception:
     pass
 
 
-TAB = "LJKSTUDIO"
+# 이 PC에는 이미 LJKS 탭이 있고 사용자 User Object 2개가 들어 있다.
+# 별도 탭을 만들면 리본에 비슷한 이름이 둘로 보이므로 여기에 합친다.
+TAB = "LJKS"
 
 # (닉네임, 서브카테고리, 아이콘 그리기 함수 이름)
 # 번호를 붙여야 리본에서 파이프라인 순서대로 정렬된다 (GH는 알파벳순).
@@ -175,12 +184,24 @@ for nick, sub, fn in SPEC:
     lines.append("%-18s %-11s saved=%s %d bytes  %s" % (
         nick, sub, ok, size, uo.Path))
 
-# 리본 갱신 방법이 있는지 확인 (없으면 재시작이 필요하다)
+# 탭을 바꿔 다시 저장하면 옛 카테고리의 프록시가 세션에 남는다. 정리한다.
 srv = ghk.Instances.ComponentServer
-names = sorted(set(m.Name for m in srv.GetType().GetMethods()
-                   if "User" in m.Name or "Refresh" in m.Name
-                   or "Load" in m.Name))
-lines.append("ComponentServer 후보 메서드: %s" % ", ".join(names))
+try:
+    srv.ClearStaleUserObjects()
+    lines.append("ClearStaleUserObjects 호출")
+except Exception as ex:
+    lines.append("ClearStaleUserObjects 실패: %s" % ex)
+
+# 결과 확인 — 탭별 개수
+for cat in (TAB, "LJKSTUDIO"):
+    n = 0
+    for p in srv.ObjectProxies:
+        try:
+            if p.Desc.Category == cat:
+                n += 1
+        except Exception:
+            pass
+    lines.append("탭 %-10s 프록시 %d개" % (cat, n))
 '''
 
 
