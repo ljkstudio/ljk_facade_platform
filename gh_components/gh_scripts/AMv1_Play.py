@@ -84,7 +84,7 @@
 #   tcp        t 시점의 TCP Plane
 #   roller     t 시점의 롤러 원
 #   duration   전체 재생 길이 (초)
-#   info       타임라인 리포트 + 실측 프레임률
+#   info       타임라인 리포트 + 기구 타당성 + 간섭 + 실측 프레임률
 
 import sys
 import os
@@ -119,6 +119,7 @@ import robot as rb
 import robot_body as rbb
 import playback as pb
 import collision as col
+import mechanics as mc
 
 
 # sticky 키 — 컴포넌트가 여러 개 놓일 수 있으므로 인스턴스 GUID로 구분한다.
@@ -375,6 +376,18 @@ base_circle = rg.Circle(
     rg.Plane(robot_base.Origin, rg.Vector3d.ZAxis), rb.BASE_RADIUS_MM)
 
 
+# ── 기구 타당성 ────────────────────────────────────────
+# 도달성과 간섭 사이에 빠져 있던 것 — **닿기는 하는데 그렇게 움직일 수 있는가.**
+# 가동범위 여유·이송 유지·자세 연속성·특이점을 본다 (mechanics.py).
+#
+# 포즈 목록의 산술이라 값이 싸다(메시도 몰드도 안 쓴다). 그래서 토글 없이 항상
+# 돈다 — 켜는 것을 잊어서 못 보는 종류의 실패를 만들지 않는다.
+mech = None
+if pose_list:
+    mech = mc.check(pose_list, tgt_pts, kinds,
+                    feed=feed, joint_scale=joint_scale)
+
+
 # ── 팔 간섭 스크리닝 ───────────────────────────────────
 # **검사가 아니라 스크리닝이다** — 표본으로 본다(collision.py 주석 참조).
 # 무거우므로 check_hit 토글로 잠근다. 결과는 포즈별 침투 깊이 목록이다.
@@ -607,6 +620,16 @@ class PlayConduit(rd.DisplayConduit):
                 C_BAD, rg.Point2d(14, y), False, 14)
             y += 18
 
+        mh = st["mech"]
+        if mh is not None and mh["problems"]:
+            d.Draw2dText("기구 문제: " + " / ".join(mh["problems"]),
+                         C_BAD, rg.Point2d(14, y), False, 14)
+            y += 18
+        elif mh is not None and mh["tight"]:
+            d.Draw2dText("기구 아슬아슬: " + " / ".join(mh["tight"]),
+                         C_TODO, rg.Point2d(14, y), False, 14)
+            y += 18
+
         hs = st["hit_sum"]
         if hs is None:
             d.Draw2dText("팔 간섭 미검사 (check_hit 를 켜세요)",
@@ -674,6 +697,7 @@ state = {
     "err_max": err_max,
     "base_ov": base_ov,
     "base_circle": base_circle,
+    "mech": mech,
     "hit_sum": hit_sum,
     "hit_pts": hit_pts,
     "hit_margin": float(hit_margin),
@@ -812,6 +836,10 @@ else:
             lines.append("   '도달 성공'으로 센다. 베이스를 몰드 밖으로 옮길 것.")
         else:
             lines.append("             몰드 영역과 {:.0f} mm 여유".format(-base_ov))
+
+    if mech is not None:
+        lines.append("")
+        lines.append(mc.report(mech))
 
     if hit_sum is not None:
         lines.append("")
