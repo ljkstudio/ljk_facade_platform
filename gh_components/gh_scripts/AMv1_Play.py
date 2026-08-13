@@ -51,7 +51,10 @@
 #   poses          float*   AMv1 Robot 의 poses (6개씩 평탄, list)
 #   targets        Plane*   AMv1 RollerPath 의 targets (list)
 #   move_kind      str*     같은 순서의 구간 종류 (list)
-#   robot_base     Plane    AMv1 Robot 에 준 것과 같은 값
+#   robot_base     Plane    로봇 베이스 평면. 비우면 base_pt/base_dir 를 본다
+#   base_pt        Point    베이스 원점 (Rhino 에서 점을 찍어 물린다)
+#   base_dir       Curve    로봇이 바라보는 방향 (Rhino 에서 선을 그어 물린다)
+#                           **AMv1 Robot 에 같은 것을 물려야 그림이 맞는다**
 #   feed           float    롤러 이송 mm/s, 없으면 50          <- 가정치
 #   joint_scale    float    공중 이동 속도 배율 0~1, 없으면 0.25
 #   dwell          float    핀 상승 후 정지 시간, 없으면 1.0
@@ -321,11 +324,14 @@ if step_mismatch:
     tgt_pts = []
     kinds = []
 
-# robot_base 를 주지 않았으면 AMv1 Robot 과 **같은** 기본값을 써야 한다.
-# 각자 갖고 있으면 로봇이 계산된 위치와 다른 곳에 그려진다.
-base_auto = robot_base is None
-if base_auto:
-    robot_base = rb.default_base_plane(tgts) if tgts else rg.Plane.WorldXY
+# 베이스 결정은 robot.py 한 곳에서 한다 — AMv1 Robot 과 **같은 함수**여야 한다.
+# 각자 판단하면 한쪽만 고쳐도 오류가 나지 않고 로봇이 계산된 위치와 다른 곳에
+# 그려진다. 그래서 두 컴포넌트에 같은 점·선을 물려야 한다.
+robot_base, base_src = rb.resolve_base_plane(
+    robot_base=robot_base,
+    base_pt=globals().get("base_pt"),
+    base_dir=globals().get("base_dir"),
+    targets=tgts)
 
 timeline = pb.build(
     pin_bases=pin_bases, pin_h_start=pin_h_start, pin_h_end=pin_h_end,
@@ -635,10 +641,11 @@ else:
         lines.append("             <- 격자 크기는 점 순서에서 유도했다")
     if pose_list:
         lines.append("로봇 포즈:   {}개".format(len(pose_list)))
-        lines.append("베이스:      {}  원점 ({:.0f}, {:.0f}, {:.0f})".format(
-            "자동" if base_auto else "입력",
-            robot_base.Origin.X, robot_base.Origin.Y, robot_base.Origin.Z))
-        lines.append("             <- AMv1 Robot 과 같은 값이어야 한다")
+        lines.append("베이스:      {}".format(base_src))
+        lines.append("             원점 ({:.0f}, {:.0f}, {:.0f})  방향 ({:.2f}, {:.2f})".format(
+            robot_base.Origin.X, robot_base.Origin.Y, robot_base.Origin.Z,
+            robot_base.XAxis.X, robot_base.XAxis.Y))
+        lines.append("             <- AMv1 Robot 과 같은 입력이어야 한다")
         if PARTS:
             lines.append("실물 형상:   파트 {}개  면 {:,}개  ({})".format(
                 len(PARTS), rbb.face_count(PARTS), parts_note))

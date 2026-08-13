@@ -328,6 +328,16 @@ finally:
         except Exception:
             pass
     log("문서 정리: 임포트 객체 {}/{}개 삭제".format(n, len(_touched)))
+
+    # **객체를 지워도 재질은 테이블에 남는다** (실측: 임포트 3회 뒤 재질
+    # 13,776개 = 4,592 x 3, 저장하면 파일이 106 KB -> 585 KB). 객체 수만 보고
+    # "원복했다"고 판정하면 이걸 놓친다.
+    try:
+        n_mat = doc.Materials.Count
+        Rhino.RhinoApp.RunScript("_-Purge _All=_Yes _Enter _Enter", False)
+        log("재질 테이블 {} -> {} (Purge)".format(n_mat, doc.Materials.Count))
+    except Exception as ex:
+        log("Purge 실패: {}".format(ex))
     try:
         doc.Views.Redraw()
     except Exception:

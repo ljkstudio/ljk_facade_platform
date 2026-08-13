@@ -36,6 +36,28 @@ RollerPath.move_kind ───────────────────�
 `Play`는 `Robot`을 **step=1** 로 돌린 결과를 필요로 합니다. step>1이면 포즈와 타겟이
 어긋나 이송 시간을 쓸 수 없습니다(Play의 info가 경고합니다).
 
+## 로봇 위치
+
+`Robot`과 `Play`에 **같은** 베이스를 물려야 계산과 그림이 맞습니다. 우선순위는
+`robot_base`(평면) > `base_pt`/`base_dir`(점·선) > 자동이고, 판단은
+`robot.resolve_base_plane()` 한 곳에서 합니다.
+
+```
+python adaptive_mold/tools/make_robot_base_ref.py
+```
+
+Rhino 레이어 `robot_base`에 점·선을 만들고 GH 파라미터로 **참조**해 두 컴포넌트에
+배선합니다. 그 다음부터는 **Rhino에서 점을 끌거나 선을 돌리면 로봇이 따라옵니다.**
+방향 선은 `Param_Curve`로 받습니다 — `Param_Line`은 Rhino 객체를 참조하지 못해
+값이 박히고, 선을 돌려도 방향이 바뀌지 않습니다.
+
+## 파라미터 관리
+
+```
+python adaptive_mold/tools/build_gh_components.py [Play|Robot]
+python adaptive_mold/tools/apply_param_docs.py      # 코드를 넣으면 툴팁이 지워진다
+```
+
 ## 공통: platform_path 입력
 
 두 컴포넌트 모두 **platform_path** (str) 입력이 필요합니다.

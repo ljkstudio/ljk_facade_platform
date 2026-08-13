@@ -7,7 +7,12 @@
 #   platform_path  str     repo root (필수)
 #   targets        Plane*  AMv1 RollerPath 의 targets (list access)
 #   move_kind      str*    같은 순서의 구간 종류 (선택). 있으면 구간별로 집계한다
-#   robot_base     Plane   로봇 베이스. 비우면 몰드 중심에서 -X로 1900mm 떨어진 곳
+#   robot_base     Plane   로봇 베이스 평면. 비우면 base_pt/base_dir 를 본다
+#   base_pt        Point   베이스 원점 (Rhino 에서 점을 찍어 물린다)
+#   base_dir       Curve   로봇이 바라보는 방향 (Rhino 에서 선을 그어 물린다)
+#                          선만 주면 선의 시작점이 원점이 된다
+#                          Line 이 아니라 Curve 로 받는다 — Rhino 의 선은
+#                          LineCurve 객체이고 GH_Line 은 참조가 안 된다 떨어진 곳
 #   frame          int     이 인덱스의 포즈로 로봇을 그린다 (애니메이션 슬라이더)
 #   step           int     N개마다 하나만 계산, 없으면 1 (미리보기 가속)
 #   iterations     int     IK 최대 반복, 없으면 30
@@ -69,11 +74,13 @@ if compute and targets:
 
     # 베이스 위치 — 주지 않으면 몰드 중심에서 -X로 1900mm.
     # 웹 시뮬레이터가 베드를 X=1.4m에 두고 도달 스위트스폿을 확인한 값에서 왔다.
-    base_given = robot_base is not None
-    if robot_base is None:
-        # 기본값은 robot.py 한 곳에 있다 — AMv1 Play 가 같은 것을 써야 로봇이
-        # 계산된 위치에 그려진다
-        robot_base = rb.default_base_plane(tgts)
+    # 베이스 결정은 robot.py 한 곳에 있다 — AMv1 Play 가 같은 함수를 써야
+    # 로봇이 계산된 위치에 그려진다
+    robot_base, base_src = rb.resolve_base_plane(
+        robot_base=robot_base,
+        base_pt=globals().get("base_pt"),
+        base_dir=globals().get("base_dir"),
+        targets=tgts)
 
     picked = list(range(0, len(tgts), int(step)))
     sampled = [tgts[i] for i in picked]
@@ -127,9 +134,11 @@ if compute and targets:
     lines = [
         "AMv1 Robot — IRB 6700-150/3.20",
         "=" * 44,
-        "베이스:      {}".format("입력" if base_given else "자동"),
-        "             원점 ({:.0f}, {:.0f}, {:.0f})".format(
-            robot_base.Origin.X, robot_base.Origin.Y, robot_base.Origin.Z),
+        "베이스:      {}".format(base_src),
+        "             원점 ({:.0f}, {:.0f}, {:.0f})  바라보는 방향 ({:.2f}, {:.2f})".format(
+            robot_base.Origin.X, robot_base.Origin.Y, robot_base.Origin.Z,
+            robot_base.XAxis.X, robot_base.XAxis.Y),
+        "             <- AMv1 Play 에 같은 입력을 물려야 그림이 맞는다",
         "타겟:        {}개 중 {}개 계산 (step {})".format(
             len(tgts), len(sampled), int(step)),
         "",

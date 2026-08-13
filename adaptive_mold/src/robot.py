@@ -176,6 +176,106 @@ def default_base_plane(target_planes):
                     rg.Vector3d.XAxis, rg.Vector3d.YAxis)
 
 
+def _direction_of(obj):
+    """Line·Curve·Vector 무엇이 와도 방향 벡터를 뽑는다.
+
+    GH 입력이 무엇으로 들어올지 한 가지로 못 정한다 — 힌트를 Line 으로 걸어도
+    사용자가 Curve 나 Vector 를 물릴 수 있다. 되는 것을 다 받는다.
+    """
+    if obj is None:
+        return None
+    v = getattr(obj, "Direction", None)      # Line, Vector3d 는 여기서 끝난다
+    if v is None:
+        a = getattr(obj, "From", None) or getattr(obj, "PointAtStart", None)
+        b = getattr(obj, "To", None) or getattr(obj, "PointAtEnd", None)
+        if a is None or b is None:
+            if isinstance(obj, rg.Vector3d):
+                v = rg.Vector3d(obj)
+            else:
+                return None
+        else:
+            v = rg.Vector3d(b - a)
+    v = rg.Vector3d(v)
+    return v if v.Length > 1e-9 else None
+
+
+def _start_of(obj):
+    if obj is None:
+        return None
+    p = getattr(obj, "From", None)
+    if p is None:
+        p = getattr(obj, "PointAtStart", None)
+    return rg.Point3d(p) if p is not None else None
+
+
+def base_plane_from(point=None, line=None, targets=None):
+    """점과 선으로 베이스 평면을 만든다. `(평면, 설명)` 을 돌려준다.
+
+    Plane 을 GH 에서 만드는 것보다 **Rhino 에서 점을 찍고 선을 긋는 것**이 쉽다.
+    그래서 이 두 입력을 받는다.
+
+        선만       원점 = 선의 시작점, +X = 선 방향
+        점 + 선    원점 = 점,          +X = 선 방향
+        점만       원점 = 점,          +X = 타겟 중심을 향한다
+        둘 다 없음 (None, "") — 호출한 쪽이 기본값을 쓴다
+
+    **로봇은 언제나 똑바로 선다.** 방향 벡터를 월드 XY 로 투영하므로 기울어진
+    선을 그어도 베이스가 눕지 않는다 — 원격 뷰포트에서 선을 그으면 의도와 달리
+    기울어지기 쉽고, 그걸 그대로 받으면 로봇이 넘어진다. 투영으로 바뀌었으면
+    설명에 적어 돌려주므로 조용히 넘어가지 않는다.
+    베이스를 실제로 기울이고 싶으면 `robot_base` 로 평면을 직접 준다.
+    """
+    origin = rg.Point3d(point) if point is not None else _start_of(line)
+    if origin is None:
+        return None, ""
+
+    notes = []
+    v = _direction_of(line)
+
+    if v is None and targets:
+        pts = [p.Origin for p in targets if p is not None]
+        if pts:
+            c = rg.BoundingBox(pts).Center
+            v = rg.Vector3d(c - origin)
+            notes.append("방향은 타겟 중심을 향하게 잡았다")
+
+    if v is None:
+        v = rg.Vector3d.XAxis
+        notes.append("방향이 없어 월드 X 를 썼다")
+
+    if abs(v.Z) > 1e-6:
+        notes.append("선이 수평이 아니라 XY 로 투영했다 (로봇은 똑바로 선다)")
+    v.Z = 0.0
+    if v.Length < 1e-9:
+        v = rg.Vector3d.XAxis
+        notes.append("선이 수직이어서 방향을 못 얻었다 — 월드 X 를 썼다")
+    v.Unitize()
+
+    y = rg.Vector3d.CrossProduct(rg.Vector3d.ZAxis, v)
+    return rg.Plane(origin, v, y), "; ".join(notes)
+
+
+def resolve_base_plane(robot_base=None, base_pt=None, base_dir=None,
+                       targets=None):
+    """베이스 평면 하나로 정리한다 — **두 컴포넌트가 반드시 같이 써야 한다.**
+
+    우선순위: `robot_base`(평면) > 점·선 > 자동 기본값.
+
+    표시 컴포넌트와 계산 컴포넌트가 각자 이 판단을 하면, 한쪽만 고쳐도 오류가
+    나지 않고 **로봇이 계산된 위치와 다른 곳에 그려진다**(J-006 TRAP-03).
+    """
+    if robot_base is not None:
+        return robot_base, "입력(평면)"
+
+    pl, note = base_plane_from(base_pt, base_dir, targets)
+    if pl is not None:
+        src = "점+선" if (base_pt is not None and base_dir is not None) else (
+            "선" if base_dir is not None else "점")
+        return pl, src + ((" — " + note) if note else "")
+
+    return default_base_plane(targets), "자동"
+
+
 def link_lines_mm(pose_deg, base_plane=None):
     """관절 피벗을 이은 선 + 플랜지→TCP 선 (mm). 애니메이션 표시용."""
     frames = joint_frames(pose_deg)
