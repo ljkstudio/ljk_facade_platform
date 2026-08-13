@@ -1120,6 +1120,7 @@ git commit -m "feat(unfold): 희소 CG 솔버 — numpy 는 가속기이지 의�
   - `initial.layout(verts, faces, topo) -> (uv, method, flips)` — `method` 는 `"projection"` 또는 `"tutte"`
   - `initial.signed_area(uv, face) -> float` (Task 7 의 `flatten.align` 이 쓴다)
   - `solver.Sparse.pin_many(values, b)` — `values` 는 `{정점: 값}`, `b` 를 제자리에서 고친다
+  - `solver.Sparse.copy() -> Sparse` — 같은 행렬을 축마다 새로 고정해 쓰기 위한 복제
 
 - [ ] **Step 1: 시험용 메쉬 생성기를 쓴다**
 
@@ -1309,9 +1310,20 @@ def test_pin_many_moves_known_values_to_the_right_hand_side():
 Run: `python -m pytest unfold/tests/test_initial.py unfold/tests/test_solver.py -q`
 Expected: FAIL — `ModuleNotFoundError: No module named 'initial'` 와 `AttributeError: 'Sparse' object has no attribute 'pin_many'`
 
-- [ ] **Step 4: `solver.Sparse.pin_many` 를 추가한다**
+- [ ] **Step 4: `solver.Sparse.pin_many` 와 `copy` 를 추가한다**
 
 `unfold/src/solver.py` 의 `pin` 메서드 바로 뒤에 넣는다:
+
+```python
+    def copy(self):
+        # type: () -> object
+        """같은 항목을 가진 새 행렬. 축마다 다른 값으로 고정해야 하므로 필요하다."""
+        out = Sparse(self.n)
+        out._d = dict(self._d)
+        return out
+```
+
+이어서:
 
 ```python
     def pin_many(self, values, b):
@@ -1440,9 +1452,7 @@ def tutte(verts, topo):
 
     out = []
     for axis in (0, 1):
-        mat = sv.Sparse(n)
-        for ij, val in lap._d.items():       # 축마다 같은 행렬을 새로 조립한다
-            mat.add(ij[0], ij[1], val)
+        mat = lap.copy()          # 축마다 다른 값으로 고정하므로 원본을 보존한다
         rhs = [0.0] * n
         mat.pin_many(dict((v, p[axis]) for v, p in fixed.items()), rhs)
         sol, _it = sv.cg(mat.matvec, rhs, tol=1e-12, maxiter=20 * n + 200)
@@ -1460,10 +1470,6 @@ def layout(verts, faces, topo):
     uv = tutte(verts, topo)
     return uv, "tutte", count_flips(uv, faces)
 ```
-
-> **주의**: `tutte` 가 `lap._d` 를 직접 읽는다. 이건 같은 모듈 묶음 안의 의도된
-> 접근이며, `Sparse` 에 공개 복사 메서드를 만들 만큼 쓰임이 많지 않다.
-> 세 번째 사용처가 생기면 `Sparse.copy()` 로 승격한다.
 
 - [ ] **Step 6: 테스트가 통과하는지 확인한다**
 
@@ -2687,6 +2693,18 @@ def test_feature_points_survive_simplification():
     assert (100.0, 0.0) in simple, "직각 코너가 사라졌다"
 
 
+def test_smooth_boundary_without_corners_still_produces_a_curve():
+    """코너가 없는 원판 경계. 고정점이 하나뿐이면 구간이 자기 자신으로 닫혀
+    결과가 빈 리스트가 된다 — 재단선이 조용히 사라지는 실패다."""
+    circle = [(50.0 * math.cos(2 * math.pi * i / 40.0),
+               50.0 * math.sin(2 * math.pi * i / 40.0)) for i in range(40)]
+    feats = bk.feature_indices(circle, feature_deg=30.0)
+    assert feats == [], "이 원은 코너가 없어야 검사가 성립한다"
+    simple = bk.simplify(circle, feats, tol=0.5)
+    assert len(simple) >= 3
+    assert poly_area(simple) > 0
+
+
 def test_simplify_removes_points_from_a_straight_run():
     straight = [(float(i), 0.0) for i in range(11)] + [(10.0, 5.0), (0.0, 5.0)]
     feats = bk.feature_indices(straight, feature_deg=30.0)
@@ -2819,7 +2837,13 @@ def simplify(poly, features, tol):
     n = len(poly)
     if tol <= 0.0 or n < 4:
         return list(poly)
-    anchors = sorted(set(features)) or [0]
+    anchors = sorted(set(features))
+    if len(anchors) < 2:
+        # 매끄러운 경계(원판 등)는 코너가 없다. 고정점이 하나뿐이면 구간이
+        # 자기 자신으로 닫혀 결과가 **빈 리스트**가 된다 — 재단선이 사라진다.
+        # 그래서 반대편에 하나를 더 세워 닫힌 고리를 두 구간으로 자른다.
+        start = anchors[0] if anchors else 0
+        anchors = sorted({start, (start + n // 2) % n})
     out = []
     for a in range(len(anchors)):
         i = anchors[a]
