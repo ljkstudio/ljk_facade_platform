@@ -70,6 +70,11 @@
 #   solo           bool     재생 중 다른 컴포넌트 프리뷰를 끈다, 없으면 True
 #   show_body      bool     실물 메시로 그린다, 없으면 True
 #   parts_file     str      irb6700_parts.3dm 경로. 비우면 저장소 기본 위치
+#   mold_srf       Brep     간섭 검사용 성형면 (선택). 비우면 핀 상단 + stack
+#   stack          float    핀 상단에서 성형면까지 (mm), 없으면 28
+#   check_hit      bool     팔 간섭 스크리닝 실행, 없으면 False (무겁다)
+#   hit_margin     float    간섭 여유 (mm), 없으면 30
+#   hit_step       int      N개마다 하나만 검사, 없으면 1
 #
 # Outputs:
 #   pins       t 시점의 핀 (선)
@@ -113,6 +118,7 @@ for _name in list(sys.modules.keys()):
 import robot as rb
 import robot_body as rbb
 import playback as pb
+import collision as col
 
 
 # sticky 키 — 컴포넌트가 여러 개 놓일 수 있으므로 인스턴스 GUID로 구분한다.
@@ -142,6 +148,10 @@ _default("show_path", True)
 _default("solo", True)
 _default("show_body", True)
 _default("parts_file", "")
+_default("check_hit", False)
+_default("hit_margin", col.DEFAULT_MARGIN)
+_default("hit_step", 1, positive=True)
+_default("stack", 28.0)
 
 if base_plane is None:
     base_plane = rg.Plane.WorldXY
@@ -192,6 +202,9 @@ C_BODY = sd.Color.FromArgb(255, 236, 236, 231)
 # 못 닿는 구간 — 로봇을 다른 색으로 칠한다. 자세만 보고는 구별이 안 된다
 C_BODY_BAD = sd.Color.FromArgb(255, 235, 150, 140)
 C_BAD = sd.Color.FromArgb(255, 220, 20, 20)
+# 팔 간섭 — 도달 실패와 다른 색이어야 한다. 원인이 다르면 손볼 곳도 다르다
+C_BODY_HIT = sd.Color.FromArgb(255, 250, 180, 60)
+C_HIT = sd.Color.FromArgb(255, 230, 130, 0)
 
 
 # ── 이전 재생 정리 ──────────────────────────────────────
@@ -362,6 +375,48 @@ base_circle = rg.Circle(
     rg.Plane(robot_base.Origin, rg.Vector3d.ZAxis), rb.BASE_RADIUS_MM)
 
 
+# ── 팔 간섭 스크리닝 ───────────────────────────────────
+# **검사가 아니라 스크리닝이다** — 표본으로 본다(collision.py 주석 참조).
+# 무거우므로 check_hit 토글로 잠근다. 결과는 포즈별 침투 깊이 목록이다.
+
+hitfield = None
+hit_pens = []
+hit_sum = None
+hit_pts = []
+
+if check_hit and PARTS and pose_list and pin_pts:
+    # 몰드 면 = 핀 상단 + 스택 두께. mold_srf 를 물리면 그쪽이 우선이다.
+    srf = globals().get("mold_srf")
+    if srf is not None:
+        hitfield = col.Heightfield.from_surface(srf, nx=40, ny=40)
+    if hitfield is None and NX >= 2 and NY >= 2:
+        tops = [b + base_plane.ZAxis * h
+                for b, h in zip(pin_bases, pin_h_end)]
+        hitfield = col.Heightfield.from_grid_points(
+            tops, NX, NY, offset=float(stack))
+
+    if hitfield is not None:
+        samples = col.sample_points(PARTS)
+        hit_pens, hit_whos = col.scan_poses(
+            pose_list, samples, hitfield, base_plane=robot_base,
+            margin=float(hit_margin), step=int(hit_step))
+        hit_sum = col.summarize(hit_pens, hit_whos, step=int(hit_step),
+                                total=len(pose_list),
+                                margin=float(hit_margin))
+        hit_pts = [tgt_pts[i] for i in hit_sum["hit_indices"]
+                   if i < len(tgt_pts)]
+
+
+def hit_at(seg):
+    """구간 seg 의 침투 깊이. step 을 쓰면 가장 가까운 표본을 본다."""
+    if not hit_pens:
+        return None
+    k = int(seg) // max(1, int(hit_step))
+    if k >= len(hit_pens):
+        k = len(hit_pens) - 1
+    return hit_pens[k]
+
+
 # ── 프레임 하나를 형상으로 ─────────────────────────────
 
 def build_frame(t):
@@ -408,7 +463,7 @@ def build_frame(t):
 
     return {"s": s, "pins": pin_lines, "moving": moving, "deck": deck,
             "links": lks, "tcp": tcp_pl, "roller": roller_crv,
-            "part_xf": part_xf}
+            "part_xf": part_xf, "hit": hit_at(s["seg"])}
 
 
 # ── 컨듀잇 ──────────────────────────────────────────────
@@ -463,8 +518,11 @@ class PlayConduit(rd.DisplayConduit):
         # 그럴듯한 자세로 서 있고, 롤러만 판재에서 떠 있다. 그 차이는 눈으로
         # 구별이 안 되므로 명시적으로 그린다.
         bad = not s["reachable"]
+        hit = (f["hit"] is not None) and (f["hit"] > 0.0)
         if st["fail_pts"]:
             d.DrawPoints(st["fail_pts"], rd.PointStyle.X, 4, C_BAD)
+        if st["hit_pts"]:
+            d.DrawPoints(st["hit_pts"], rd.PointStyle.Square, 5, C_HIT)
 
         # 베이스 자리. 겹치면 붉게 — IK 가 통과해 버리는 종류의 불가능이다
         ov = st["base_ov"]
@@ -483,7 +541,11 @@ class PlayConduit(rd.DisplayConduit):
         parts = st["parts"]
         drew_body = False
         if parts and f["part_xf"]:
-            mat = st["material_bad"] if bad else st["material"]
+            mat = st["material"]
+            if hit:
+                mat = st["material_hit"]
+            elif bad:
+                mat = st["material_bad"]
             for name, mesh in parts.items():
                 xf = f["part_xf"].get(name)
                 if xf is None:
@@ -537,11 +599,33 @@ class PlayConduit(rd.DisplayConduit):
             d.Draw2dText("도달 OK  최대 {:.1f} mm".format(st["err_max"]),
                          C_HUD, rg.Point2d(14, y), False, 14)
 
+        y += 18
         if st["base_ov"] > 0:
             d.Draw2dText(
                 "베이스가 몰드 영역과 {:.0f} mm 겹친다 — 세울 수 없는 자리다".format(
                     st["base_ov"]),
-                C_BAD, rg.Point2d(14, y + 18), False, 14)
+                C_BAD, rg.Point2d(14, y), False, 14)
+            y += 18
+
+        hs = st["hit_sum"]
+        if hs is None:
+            d.Draw2dText("팔 간섭 미검사 (check_hit 를 켜세요)",
+                         C_TODO, rg.Point2d(14, y), False, 14)
+        elif hs["hits"]:
+            d.Draw2dText(
+                "팔 간섭 {} / {} 포즈   최대 {:.0f} mm   {}{}".format(
+                    hs["hits"], hs["checked"], hs["worst"],
+                    ", ".join("{} {}".format(k, v)
+                              for k, v in sorted(hs["per_part"].items())),
+                    "   << 지금 {:.0f} mm".format(f["hit"]) if hit else ""),
+                C_HIT, rg.Point2d(14, y), False, 14)
+        else:
+            d.Draw2dText(
+                "팔 간섭 없음 ({}포즈 표본)   최소 여유 {}".format(
+                    hs["checked"],
+                    "{:.0f} mm".format(hs["min_clear"])
+                    if hs["min_clear"] is not None else "판정 불가"),
+                C_HUD, rg.Point2d(14, y), False, 14)
 
         st["draw_ms"] = sw.Elapsed.TotalMilliseconds - t0
         st["draws"] += 1
@@ -590,6 +674,10 @@ state = {
     "err_max": err_max,
     "base_ov": base_ov,
     "base_circle": base_circle,
+    "hit_sum": hit_sum,
+    "hit_pts": hit_pts,
+    "hit_margin": float(hit_margin),
+    "material_hit": rd.DisplayMaterial(C_BODY_HIT),
     # 실패 타겟 위치 — 못 가는 구간이 경로 어디인지 한눈에 보이게
     "fail_pts": [tgt_pts[i] for i in fail_idx if i < len(tgt_pts)],
     "sw": System.Diagnostics.Stopwatch.StartNew(),
@@ -724,6 +812,40 @@ else:
             lines.append("   '도달 성공'으로 센다. 베이스를 몰드 밖으로 옮길 것.")
         else:
             lines.append("             몰드 영역과 {:.0f} mm 여유".format(-base_ov))
+
+    if hit_sum is not None:
+        lines.append("")
+        lines.append("팔 간섭 스크리닝 ({}개 중 {}개 포즈, 여유 {:.0f} mm)".format(
+            hit_sum["total"], hit_sum["checked"], float(hit_margin)))
+        if hit_sum["min_clear"] is None:
+            lines.append("  최소 여유: 판정 불가 (팔이 몰드 위를 지나지 않는다)")
+        else:
+            lines.append("  최소 여유: {:.0f} mm  <- margin 을 어떻게 잡아도 같은 값이다.".format(
+                hit_sum["min_clear"]))
+            lines.append("             형상이 정하는 실측값이므로 위치를 잡을 때")
+            lines.append("             '얼마나 아슬아슬한가'를 이 숫자로 읽는다")
+        if hit_sum["hits"]:
+            lines.append("  걸림 {}포즈   최대 {:.0f} mm   처음 #{}".format(
+                hit_sum["hits"], hit_sum["worst"], hit_sum["worst_at"]))
+            for k in sorted(hit_sum["per_part"]):
+                lines.append("    {:<10} {}포즈".format(
+                    k, hit_sum["per_part"][k]))
+            lines.append("  <- 팔이 몰드 면 아래로 들어간다. 베이스를 옮기거나")
+            lines.append("     경로 순서·접근 높이를 바꿔야 한다")
+        else:
+            lines.append("  걸림 없음")
+        lines.append("  ** 검사가 아니라 스크리닝이다. 표본으로 보므로 가느다란")
+        lines.append("     돌출부는 빠져나갈 수 있다. 자기 간섭·프레임·주변")
+        lines.append("     설비는 보지 않는다.")
+        if hit_sum["step"] > 1:
+            lines.append("  ** step={} 이라 사이 포즈는 보지 않았다.".format(
+                hit_sum["step"]))
+    elif check_hit:
+        lines.append("")
+        lines.append("팔 간섭: 높이장을 만들 수 없었다 — 핀 격자나 mold_srf 를 확인할 것")
+    else:
+        lines.append("")
+        lines.append("팔 간섭: 미검사 (check_hit 를 켜면 훑는다)")
         if PARTS:
             lines.append("실물 형상:   파트 {}개  면 {:,}개  ({})".format(
                 len(PARTS), rbb.face_count(PARTS), parts_note))

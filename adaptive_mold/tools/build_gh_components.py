@@ -80,6 +80,11 @@ PLAY_INPUTS = [
     ("solo",          "GH_BooleanHint_CS", False, ("toggle", True)),
     ("show_body",     "GH_BooleanHint_CS", False, ("toggle", True)),
     ("parts_file",    "GH_StringHint_CS",  False, None),
+    ("mold_srf",      "GH_BrepHint",       False, None),
+    ("stack",         "GH_DoubleHint_CS",  False, ("slider", 0, 100, 28, 0)),
+    ("check_hit",     "GH_BooleanHint_CS", False, ("toggle", False)),
+    ("hit_margin",    "GH_DoubleHint_CS",  False, ("slider", 0, 200, 30, 0)),
+    ("hit_step",      "GH_IntegerHint_CS", False, ("slider", 1, 50, 1, 0)),
 ]
 
 # AMv1 Robot — 이미 돌고 있으므로 **추가만** 한다 (reorder=False).
@@ -121,6 +126,7 @@ SPECS = {
             ("base_pt",       "AMv1 Robot",      "base_pt"),
             ("base_dir",      "AMv1 Robot",      "base_dir"),
             ("roller_d",      "AMv1 RollerPath", "roller_d"),
+            ("mold_srf",      "AMv1 RollerPath", "mold_srf"),
         ],
     },
     "Robot": {
