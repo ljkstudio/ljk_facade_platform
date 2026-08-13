@@ -48,3 +48,6 @@ adaptive_mold/grasshopper/_*_log.txt
 node_modules/
 dashboard/dist/
 dashboard/tsconfig.tsbuildinfo
+
+# 탐색 중간 결과 (재실행하면 다시 생긴다)
+adaptive_mold/grasshopper/_search_base_results.jsonl

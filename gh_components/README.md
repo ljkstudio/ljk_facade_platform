@@ -10,6 +10,8 @@ GhPython 컴포넌트용 **RunScript 파일**은 `gh_scripts/` 폴더에 있습�
 | `gh_scripts/AMv1_RollerPath.py` | 롤러 툴패스 생성 (왕복 지그재그 + 공중 이동) |
 | `gh_scripts/AMv1_Robot.py` | IRB 6700 도달성 검사·포즈 생성 (IK) |
 | `gh_scripts/AMv1_PathFrames.py` | 경로 위 법선·툴축 표시 (경로 확인용) |
+| `gh_scripts/AMv1_Base.py` | **로봇 베이스 평면을 한 곳에서 정한다** (Robot·Check·Play 가 같이 쓴다) |
+| `gh_scripts/AMv1_Check.py` | **판정 — 도달 / 기구(가동범위·이송·특이점) / 간섭** |
 | `gh_scripts/AMv1_Play.py` | **실제 속도 재생 — 핀 상승 + 로봇 성형 (IRB 6700 실물 형상)** |
 
 로봇 실물 메시는 `adaptive_mold/grasshopper/irb6700_parts.3dm` (파트 9개, 12만 면).
@@ -38,11 +40,29 @@ RollerPath.move_kind ───────────────────�
 `Play`는 `Robot`을 **step=1** 로 돌린 결과를 필요로 합니다. step>1이면 포즈와 타겟이
 어긋나 이송 시간을 쓸 수 없습니다(Play의 info가 경고합니다).
 
+## 컴포넌트 경계 (J-012)
+
+**바뀌는 이유로 갈랐습니다.** 한 덩어리였을 때는 색을 고치려다 판정을 깨는 일이
+있었습니다.
+
+```
+AMv1 Base   좌표 규약  — plane 하나를 낸다
+   plane ──→ Robot.robot_base, Check.robot_plane, Play.robot_plane
+AMv1 Check  공학 판정  — 도달 / 기구 / 간섭
+   warn ───→ Play.warn   (HUD 에 그대로 띄운다)
+   bad ────→ Play.bad    (그 구간을 다른 색으로)
+AMv1 Play   표시·시간  — 판정의 **이유를 모른다**
+```
+
+`Play`는 문장을 만들지 않고 `Check`가 쓴 줄을 그립니다 — 양쪽에서 쓰면 두
+컴포넌트가 서로 다른 말을 합니다.
+
 ## 로봇 위치
 
-`Robot`과 `Play`에 **같은** 베이스를 물려야 계산과 그림이 맞습니다. 우선순위는
-`robot_base`(평면) > `base_pt`/`base_dir`(점·선) > 자동이고, 판단은
-`robot.resolve_base_plane()` 한 곳에서 합니다.
+**`AMv1 Base`가 정하고 나머지는 받습니다.** 각자 `resolve_base_plane()`을 부르면
+입력을 셋에 똑같이 물려야 하고, 하나만 빼먹으면 오류 없이 **로봇이 계산된 위치와
+다른 곳에 그려집니다.** 우선순위는 `robot_base`(평면) > `base_pt`/`base_dir`
+(점·선) > 자동입니다.
 
 ```
 python adaptive_mold/tools/make_robot_base_ref.py
@@ -74,7 +94,7 @@ python adaptive_mold/tools/search_base.py --polar 1800,2000,100 --angles 150,210
 ## 파라미터 관리
 
 ```
-python adaptive_mold/tools/build_gh_components.py [Play|Robot]
+python adaptive_mold/tools/build_gh_components.py [Base|Check|Play|Robot]
 python adaptive_mold/tools/apply_param_docs.py      # 코드를 넣으면 툴팁이 지워진다
 ```
 

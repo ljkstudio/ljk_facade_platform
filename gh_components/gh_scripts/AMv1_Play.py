@@ -49,14 +49,11 @@
 #   pin_home       float    핀 출발 높이, 없으면 0
 #   pin_speed      float    액추에이터 속도 mm/s, 없으면 50   <- 가정치
 #   poses          float*   AMv1 Robot 의 poses (6개씩 평탄, list)
-#   reach_err      float*   AMv1 Robot 의 reach_err — **연결할 것.**
-#                           없으면 못 닿는 위치도 되는 것처럼 보인다
 #   targets        Plane*   AMv1 RollerPath 의 targets (list)
 #   move_kind      str*     같은 순서의 구간 종류 (list)
-#   robot_base     Plane    로봇 베이스 평면. 비우면 base_pt/base_dir 를 본다
-#   base_pt        Point    베이스 원점 (Rhino 에서 점을 찍어 물린다)
-#   base_dir       Curve    로봇이 바라보는 방향 (Rhino 에서 선을 그어 물린다)
-#                           **AMv1 Robot 에 같은 것을 물려야 그림이 맞는다**
+#   robot_plane    Plane    **AMv1 Base 의 plane.** Robot·Check 와 같은 것
+#   warn           str*     AMv1 Check 의 warn — HUD 에 그대로 띄운다 (list)
+#   bad            int*     AMv1 Check 의 bad — 그 구간을 다른 색으로 (list)
 #   feed           float    롤러 이송 mm/s, 없으면 50          <- 가정치
 #   joint_scale    float    공중 이동 속도 배율 0~1, 없으면 0.25
 #   dwell          float    핀 상승 후 정지 시간, 없으면 1.0
@@ -70,11 +67,10 @@
 #   solo           bool     재생 중 다른 컴포넌트 프리뷰를 끈다, 없으면 True
 #   show_body      bool     실물 메시로 그린다, 없으면 True
 #   parts_file     str      irb6700_parts.3dm 경로. 비우면 저장소 기본 위치
-#   mold_srf       Brep     간섭 검사용 성형면 (선택). 비우면 핀 상단 + stack
-#   stack          float    핀 상단에서 성형면까지 (mm), 없으면 28
-#   check_hit      bool     팔 간섭 스크리닝 실행, 없으면 False (무겁다)
-#   hit_margin     float    간섭 여유 (mm), 없으면 30
-#   hit_step       int      N개마다 하나만 검사, 없으면 1
+#
+# **판정은 여기 없다.** 도달·기구·간섭은 AMv1 Check 가 본다. 이 컴포넌트는
+# Check 가 준 warn(문장)과 bad(구간 인덱스)를 그리기만 한다 — 이유를 모른다.
+# 그래서 판정 기준이 바뀌어도 이 코드는 손대지 않는다.
 #
 # Outputs:
 #   pins       t 시점의 핀 (선)
@@ -84,7 +80,7 @@
 #   tcp        t 시점의 TCP Plane
 #   roller     t 시점의 롤러 원
 #   duration   전체 재생 길이 (초)
-#   info       타임라인 리포트 + 기구 타당성 + 간섭 + 실측 프레임률
+#   info       타임라인 리포트 + Check 가 준 경고 + 실측 프레임률
 
 import sys
 import os
@@ -118,8 +114,6 @@ for _name in list(sys.modules.keys()):
 import robot as rb
 import robot_body as rbb
 import playback as pb
-import collision as col
-import mechanics as mc
 
 
 # sticky 키 — 컴포넌트가 여러 개 놓일 수 있으므로 인스턴스 GUID로 구분한다.
@@ -149,10 +143,6 @@ _default("show_path", True)
 _default("solo", True)
 _default("show_body", True)
 _default("parts_file", "")
-_default("check_hit", False)
-_default("hit_margin", col.DEFAULT_MARGIN)
-_default("hit_step", 1, positive=True)
-_default("stack", 28.0)
 
 if base_plane is None:
     base_plane = rg.Plane.WorldXY
@@ -203,9 +193,6 @@ C_BODY = sd.Color.FromArgb(255, 236, 236, 231)
 # 못 닿는 구간 — 로봇을 다른 색으로 칠한다. 자세만 보고는 구별이 안 된다
 C_BODY_BAD = sd.Color.FromArgb(255, 235, 150, 140)
 C_BAD = sd.Color.FromArgb(255, 220, 20, 20)
-# 팔 간섭 — 도달 실패와 다른 색이어야 한다. 원인이 다르면 손볼 곳도 다르다
-C_BODY_HIT = sd.Color.FromArgb(255, 250, 180, 60)
-C_HIT = sd.Color.FromArgb(255, 230, 130, 0)
 
 
 # ── 이전 재생 정리 ──────────────────────────────────────
@@ -294,7 +281,6 @@ pin_pts = [p for p in (pin_tops or []) if p is not None]
 pose_flat = [float(v) for v in (poses or [])]
 tgts = [p for p in (targets or []) if p is not None]
 kinds = [str(k) for k in (move_kind or [])]
-errs = [float(e) for e in (globals().get("reach_err") or [])]
 
 pin_bases = []
 pin_h_end = []
@@ -344,90 +330,32 @@ if step_mismatch:
     tgt_pts = []
     kinds = []
 
-# 베이스 결정은 robot.py 한 곳에서 한다 — AMv1 Robot 과 **같은 함수**여야 한다.
-# 각자 판단하면 한쪽만 고쳐도 오류가 나지 않고 로봇이 계산된 위치와 다른 곳에
-# 그려진다. 그래서 두 컴포넌트에 같은 점·선을 물려야 한다.
-robot_base, base_src = rb.resolve_base_plane(
-    robot_base=robot_base,
-    base_pt=globals().get("base_pt"),
-    base_dir=globals().get("base_dir"),
-    targets=tgts)
-
-# 오차 개수가 포즈 개수와 다르면 어느 타겟의 오차인지 알 수 없다 — 버린다.
-# 억지로 맞추면 엉뚱한 구간을 실패로 칠하게 되고, 그게 더 나쁘다.
-err_mismatch = bool(errs) and bool(pose_list) and len(errs) != len(pose_list)
-if err_mismatch:
-    errs = []
+# **베이스는 여기서 정하지 않는다.** AMv1 Base 가 정한 평면을 그대로 받는다.
+# 예전에는 이 컴포넌트가 robot_base/base_pt/base_dir 로 직접 판단했는데, 그러면
+# Robot·Check 에 같은 입력을 물려야 하는 부담이 남고, 하나만 빼먹으면 오류 없이
+# **로봇이 계산된 위치와 다른 곳에 그려진다**(J-006 TRAP-03).
+# 이제 안 물리면 로봇이 원점에 서므로 빼먹은 것이 화면에 바로 드러난다.
+robot_plane_given = robot_plane is not None
+if robot_plane is None:
+    robot_plane = rg.Plane.WorldXY
 
 timeline = pb.build(
     pin_bases=pin_bases, pin_h_start=pin_h_start, pin_h_end=pin_h_end,
     pin_speed=pin_speed,
     poses=pose_list, kinds=kinds, points=tgt_pts,
-    feed=feed, joint_scale=joint_scale, dwell=dwell, errors=errs)
+    feed=feed, joint_scale=joint_scale, dwell=dwell)
 
 duration = timeline.duration
 
-fail_idx = timeline.robot.failed_indices() if timeline.robot else []
-err_max = max(errs) if errs else 0.0
-
-# 베이스가 몰드 영역과 겹치면 그 위치는 물리적으로 불가능하다 — IK 는 이걸 모른다
-base_ov = rb.base_overlap(robot_base, pin_bases) if pin_bases else 0.0
 base_circle = rg.Circle(
-    rg.Plane(robot_base.Origin, rg.Vector3d.ZAxis), rb.BASE_RADIUS_MM)
+    rg.Plane(robot_plane.Origin, rg.Vector3d.ZAxis), rb.BASE_RADIUS_MM)
 
 
-# ── 기구 타당성 ────────────────────────────────────────
-# 도달성과 간섭 사이에 빠져 있던 것 — **닿기는 하는데 그렇게 움직일 수 있는가.**
-# 가동범위 여유·이송 유지·자세 연속성·특이점을 본다 (mechanics.py).
-#
-# 포즈 목록의 산술이라 값이 싸다(메시도 몰드도 안 쓴다). 그래서 토글 없이 항상
-# 돈다 — 켜는 것을 잊어서 못 보는 종류의 실패를 만들지 않는다.
-mech = None
-if pose_list:
-    mech = mc.check(pose_list, tgt_pts, kinds,
-                    feed=feed, joint_scale=joint_scale)
-
-
-# ── 팔 간섭 스크리닝 ───────────────────────────────────
-# **검사가 아니라 스크리닝이다** — 표본으로 본다(collision.py 주석 참조).
-# 무거우므로 check_hit 토글로 잠근다. 결과는 포즈별 침투 깊이 목록이다.
-
-hitfield = None
-hit_pens = []
-hit_sum = None
-hit_pts = []
-
-if check_hit and PARTS and pose_list and pin_pts:
-    # 몰드 면 = 핀 상단 + 스택 두께. mold_srf 를 물리면 그쪽이 우선이다.
-    srf = globals().get("mold_srf")
-    if srf is not None:
-        hitfield = col.Heightfield.from_surface(srf, nx=40, ny=40)
-    if hitfield is None and NX >= 2 and NY >= 2:
-        tops = [b + base_plane.ZAxis * h
-                for b, h in zip(pin_bases, pin_h_end)]
-        hitfield = col.Heightfield.from_grid_points(
-            tops, NX, NY, offset=float(stack))
-
-    if hitfield is not None:
-        samples = col.sample_points(PARTS)
-        hit_pens, hit_whos = col.scan_poses(
-            pose_list, samples, hitfield, base_plane=robot_base,
-            margin=float(hit_margin), step=int(hit_step))
-        hit_sum = col.summarize(hit_pens, hit_whos, step=int(hit_step),
-                                total=len(pose_list),
-                                margin=float(hit_margin))
-        hit_pts = [tgt_pts[i] for i in hit_sum["hit_indices"]
-                   if i < len(tgt_pts)]
-
-
-def hit_at(seg):
-    """구간 seg 의 침투 깊이. step 을 쓰면 가장 가까운 표본을 본다."""
-    if not hit_pens:
-        return None
-    k = int(seg) // max(1, int(hit_step))
-    if k >= len(hit_pens):
-        k = len(hit_pens) - 1
-    return hit_pens[k]
+# ── 문제 구간 ──────────────────────────────────────────
+# **판정은 AMv1 Check 가 한다.** 여기는 이유를 모른 채 색만 칠한다 — 도달
+# 실패인지 간섭인지 구분하지 않는다. 그 구분이 필요하면 Check 의 리포트를 본다.
+# 이렇게 두면 판정 기준이 바뀌어도 이 컴포넌트를 손대지 않는다.
+BAD = set(int(v) for v in (bad or []))
 
 
 # ── 프레임 하나를 형상으로 ─────────────────────────────
@@ -463,20 +391,20 @@ def build_frame(t):
     part_xf = {}
     pose = s["pose"]
     if pose is not None:
-        lks = rb.link_lines_mm(pose, base_plane=robot_base)
+        lks = rb.link_lines_mm(pose, base_plane=robot_plane)
         tcp_pl = rb.tcp_plane_mm(pose)
-        tcp_pl.Transform(rg.Transform.PlaneToPlane(rg.Plane.WorldXY, robot_base))
+        tcp_pl.Transform(rg.Transform.PlaneToPlane(rg.Plane.WorldXY, robot_plane))
         # 롤러는 축(TCP X)에 직각인 원이다
         roller_crv = rg.Circle(
             rg.Plane(tcp_pl.Origin, tcp_pl.XAxis), roller_d / 2.0)
         if PARTS:
             # 변환만 만든다 — **메시를 복제하지 않는다.** 프레임마다 12만 면을
             # 복제하면 재생이 늘어진다. 그리기는 PushModelTransform 이 한다.
-            part_xf = rbb.part_transforms(pose, base_plane=robot_base)
+            part_xf = rbb.part_transforms(pose, base_plane=robot_plane)
 
     return {"s": s, "pins": pin_lines, "moving": moving, "deck": deck,
             "links": lks, "tcp": tcp_pl, "roller": roller_crv,
-            "part_xf": part_xf, "hit": hit_at(s["seg"])}
+            "part_xf": part_xf, "bad": (s["seg"] in BAD)}
 
 
 # ── 컨듀잇 ──────────────────────────────────────────────
@@ -526,21 +454,16 @@ class PlayConduit(rd.DisplayConduit):
             if seg + 1 < len(st["tgt_pts"]):
                 d.DrawPolyline(st["tgt_pts"][seg:], C_TODO, 1)
 
-        # ── 도달 실패 표시 ──────────────────────────────
-        # **못 닿는 자세도 그려진다.** IK 가 관절 한계에서 잘라내므로 팔은
-        # 그럴듯한 자세로 서 있고, 롤러만 판재에서 떠 있다. 그 차이는 눈으로
-        # 구별이 안 되므로 명시적으로 그린다.
-        bad = not s["reachable"]
-        hit = (f["hit"] is not None) and (f["hit"] > 0.0)
-        if st["fail_pts"]:
-            d.DrawPoints(st["fail_pts"], rd.PointStyle.X, 4, C_BAD)
-        if st["hit_pts"]:
-            d.DrawPoints(st["hit_pts"], rd.PointStyle.Square, 5, C_HIT)
+        # ── 문제 구간 표시 ──────────────────────────────
+        # **문제가 있는 자세도 멀쩡하게 그려진다.** IK 가 관절 한계에서
+        # 잘라내므로 팔은 그럴듯한 자세로 서 있고 롤러만 판재에서 떠 있다.
+        # 눈으로 구별이 안 되므로 명시적으로 그린다.
+        # 어떤 문제인지는 여기서 알 필요가 없다 — AMv1 Check 가 준 목록이다.
+        bad = f["bad"]
+        if st["bad_pts"]:
+            d.DrawPoints(st["bad_pts"], rd.PointStyle.X, 4, C_BAD)
 
-        # 베이스 자리. 겹치면 붉게 — IK 가 통과해 버리는 종류의 불가능이다
-        ov = st["base_ov"]
-        d.DrawCircle(st["base_circle"], C_BAD if ov > 0 else C_PIN_DONE,
-                     4 if ov > 0 else 2)
+        d.DrawCircle(st["base_circle"], C_PIN_DONE, 2)
         if bad and f["tcp"] is not None and st["tgt_pts"]:
             seg = min(s["seg"], len(st["tgt_pts"]) - 1)
             # TCP 와 가려던 자리를 잇는다 — 이 선의 길이가 곧 오차다
@@ -554,11 +477,7 @@ class PlayConduit(rd.DisplayConduit):
         parts = st["parts"]
         drew_body = False
         if parts and f["part_xf"]:
-            mat = st["material"]
-            if hit:
-                mat = st["material_hit"]
-            elif bad:
-                mat = st["material_bad"]
+            mat = st["material_bad"] if bad else st["material"]
             for name, mesh in parts.items():
                 xf = f["part_xf"].get(name)
                 if xf is None:
@@ -594,61 +513,25 @@ class PlayConduit(rd.DisplayConduit):
         for i, line in enumerate(txt):
             d.Draw2dText(line, C_HUD, rg.Point2d(14, 16 + i * 18), False, 14)
 
-        # 도달 판정은 눈에 띄어야 한다 — 이걸 안 적으면 못 가는 위치도
-        # 되는 것처럼 보인다
+        # ── 경고 ────────────────────────────────────────
+        # **문장을 만들지 않는다.** AMv1 Check 가 준 줄을 그대로 띄운다.
+        # 판정 문구를 여기서 다시 쓰면 두 컴포넌트가 서로 다른 말을 하게 된다.
+        # 경고가 하나도 없으면 Check 를 안 물렸다는 뜻이므로 그렇게 적는다.
         y = 16 + len(txt) * 18
-        if st["n_err"] == 0:
-            d.Draw2dText("도달 판정 없음 — reach_err 를 연결하세요",
-                         C_BAD, rg.Point2d(14, y), False, 14)
-        elif st["n_fail"]:
-            d.Draw2dText(
-                "도달 실패 {} / {} ({:.1f}%)   최대 {:.0f} mm{}".format(
-                    st["n_fail"], st["n_err"],
-                    100.0 * st["n_fail"] / st["n_err"], st["err_max"],
-                    "   << 지금 이 구간 {:.0f} mm".format(s["err"])
-                    if bad else ""),
-                C_BAD, rg.Point2d(14, y), False, 14)
-        else:
-            d.Draw2dText("도달 OK  최대 {:.1f} mm".format(st["err_max"]),
-                         C_HUD, rg.Point2d(14, y), False, 14)
-
-        y += 18
-        if st["base_ov"] > 0:
-            d.Draw2dText(
-                "베이스가 몰드 영역과 {:.0f} mm 겹친다 — 세울 수 없는 자리다".format(
-                    st["base_ov"]),
-                C_BAD, rg.Point2d(14, y), False, 14)
-            y += 18
-
-        mh = st["mech"]
-        if mh is not None and mh["problems"]:
-            d.Draw2dText("기구 문제: " + " / ".join(mh["problems"]),
+        notes = st["warn"]
+        if not notes:
+            d.Draw2dText("판정 없음 — AMv1 Check 의 warn 을 연결하세요",
                          C_BAD, rg.Point2d(14, y), False, 14)
             y += 18
-        elif mh is not None and mh["tight"]:
-            d.Draw2dText("기구 아슬아슬: " + " / ".join(mh["tight"]),
-                         C_TODO, rg.Point2d(14, y), False, 14)
-            y += 18
-
-        hs = st["hit_sum"]
-        if hs is None:
-            d.Draw2dText("팔 간섭 미검사 (check_hit 를 켜세요)",
-                         C_TODO, rg.Point2d(14, y), False, 14)
-        elif hs["hits"]:
-            d.Draw2dText(
-                "팔 간섭 {} / {} 포즈   최대 {:.0f} mm   {}{}".format(
-                    hs["hits"], hs["checked"], hs["worst"],
-                    ", ".join("{} {}".format(k, v)
-                              for k, v in sorted(hs["per_part"].items())),
-                    "   << 지금 {:.0f} mm".format(f["hit"]) if hit else ""),
-                C_HIT, rg.Point2d(14, y), False, 14)
         else:
-            d.Draw2dText(
-                "팔 간섭 없음 ({}포즈 표본)   최소 여유 {}".format(
-                    hs["checked"],
-                    "{:.0f} mm".format(hs["min_clear"])
-                    if hs["min_clear"] is not None else "판정 불가"),
-                C_HUD, rg.Point2d(14, y), False, 14)
+            for w in notes:
+                d.Draw2dText(w, C_BAD if "**" in w or "문제" in w or "실패" in w
+                             else C_TODO,
+                             rg.Point2d(14, y), False, 14)
+                y += 18
+        if bad:
+            d.Draw2dText("<< 지금 이 구간이 문제 구간이다 (Check 의 bad)",
+                         C_BAD, rg.Point2d(14, y), False, 14)
 
         st["draw_ms"] = sw.Elapsed.TotalMilliseconds - t0
         st["draws"] += 1
@@ -669,7 +552,7 @@ roller = frame["roller"]
 body = []
 if PARTS and frame["part_xf"]:
     body = [m for _n, m in rbb.posed_meshes(
-        PARTS, s0["pose"], base_plane=robot_base)]
+        PARTS, s0["pose"], base_plane=robot_plane)]
 
 running = bool(play) and duration > 0
 
@@ -681,7 +564,7 @@ for ln in links:
     all_pts.append(ln.To)
 all_pts.extend(tgt_pts)
 # 실물 형상은 링크 선보다 크다 — 베이스 반경과 팔 두께만큼 더 잡는다
-all_pts.append(robot_base.Origin)
+all_pts.append(robot_plane.Origin)
 bbox = rg.BoundingBox(all_pts) if all_pts else rg.BoundingBox.Unset
 if bbox.IsValid:
     bbox.Inflate(1200.0 if PARTS else 500.0)
@@ -692,18 +575,10 @@ state = {
     "parts": PARTS,
     "material": rd.DisplayMaterial(C_BODY),
     "material_bad": rd.DisplayMaterial(C_BODY_BAD),
-    "n_err": len(errs),
-    "n_fail": len(fail_idx),
-    "err_max": err_max,
-    "base_ov": base_ov,
     "base_circle": base_circle,
-    "mech": mech,
-    "hit_sum": hit_sum,
-    "hit_pts": hit_pts,
-    "hit_margin": float(hit_margin),
-    "material_hit": rd.DisplayMaterial(C_BODY_HIT),
-    # 실패 타겟 위치 — 못 가는 구간이 경로 어디인지 한눈에 보이게
-    "fail_pts": [tgt_pts[i] for i in fail_idx if i < len(tgt_pts)],
+    "warn": [str(w) for w in (warn or [])],
+    # 문제 구간의 타겟 위치 — 경로 어디가 문제인지 한눈에 보이게
+    "bad_pts": [tgt_pts[i] for i in sorted(BAD) if i < len(tgt_pts)],
     "sw": System.Diagnostics.Stopwatch.StartNew(),
     "t0": float(t),
     "duration": duration,
@@ -824,64 +699,34 @@ else:
         lines.append("             <- 격자 크기는 점 순서에서 유도했다")
     if pose_list:
         lines.append("로봇 포즈:   {}개".format(len(pose_list)))
-        lines.append("베이스:      {}".format(base_src))
-        lines.append("             원점 ({:.0f}, {:.0f}, {:.0f})  방향 ({:.2f}, {:.2f})".format(
-            robot_base.Origin.X, robot_base.Origin.Y, robot_base.Origin.Z,
-            robot_base.XAxis.X, robot_base.XAxis.Y))
-        lines.append("             <- AMv1 Robot 과 같은 입력이어야 한다")
-        if base_ov > 0:
-            lines.append("** 베이스가 몰드 영역과 {:.0f} mm 겹친다 — 세울 수 없다.".format(
-                base_ov))
-            lines.append("   IK 는 간섭을 모르므로 팔이 몰드를 통과해 닿는 것을")
-            lines.append("   '도달 성공'으로 센다. 베이스를 몰드 밖으로 옮길 것.")
+        lines.append("베이스:      원점 ({:.0f}, {:.0f}, {:.0f})  방향 ({:+.2f}, {:+.2f})".format(
+            robot_plane.Origin.X, robot_plane.Origin.Y, robot_plane.Origin.Z,
+            robot_plane.XAxis.X, robot_plane.XAxis.Y))
+        if robot_plane_given:
+            lines.append("             <- AMv1 Base 에서 온 것")
         else:
-            lines.append("             몰드 영역과 {:.0f} mm 여유".format(-base_ov))
+            lines.append("** robot_plane 이 없어 WorldXY 로 그렸다 — 로봇이 엉뚱한")
+            lines.append("   곳에 있다. AMv1 Base 의 plane 을 연결하세요.")
 
-    if mech is not None:
-        lines.append("")
-        lines.append(mc.report(mech))
-
-    if hit_sum is not None:
-        lines.append("")
-        lines.append("팔 간섭 스크리닝 ({}개 중 {}개 포즈, 여유 {:.0f} mm)".format(
-            hit_sum["total"], hit_sum["checked"], float(hit_margin)))
-        if hit_sum["min_clear"] is None:
-            lines.append("  최소 여유: 판정 불가 (팔이 몰드 위를 지나지 않는다)")
-        else:
-            lines.append("  최소 여유: {:.0f} mm  <- margin 을 어떻게 잡아도 같은 값이다.".format(
-                hit_sum["min_clear"]))
-            lines.append("             형상이 정하는 실측값이므로 위치를 잡을 때")
-            lines.append("             '얼마나 아슬아슬한가'를 이 숫자로 읽는다")
-        if hit_sum["hits"]:
-            lines.append("  걸림 {}포즈   최대 {:.0f} mm   처음 #{}".format(
-                hit_sum["hits"], hit_sum["worst"], hit_sum["worst_at"]))
-            for k in sorted(hit_sum["per_part"]):
-                lines.append("    {:<10} {}포즈".format(
-                    k, hit_sum["per_part"][k]))
-            lines.append("  <- 팔이 몰드 면 아래로 들어간다. 베이스를 옮기거나")
-            lines.append("     경로 순서·접근 높이를 바꿔야 한다")
-        else:
-            lines.append("  걸림 없음")
-        lines.append("  ** 검사가 아니라 스크리닝이다. 표본으로 보므로 가느다란")
-        lines.append("     돌출부는 빠져나갈 수 있다. 자기 간섭·프레임·주변")
-        lines.append("     설비는 보지 않는다.")
-        if hit_sum["step"] > 1:
-            lines.append("  ** step={} 이라 사이 포즈는 보지 않았다.".format(
-                hit_sum["step"]))
-    elif check_hit:
-        lines.append("")
-        lines.append("팔 간섭: 높이장을 만들 수 없었다 — 핀 격자나 mold_srf 를 확인할 것")
+    if PARTS:
+        lines.append("실물 형상:   파트 {}개  면 {:,}개  ({})".format(
+            len(PARTS), rbb.face_count(PARTS), parts_note))
+        lines.append("             <- 메시를 복제하지 않고 좌표계를 옮겨 그린다")
     else:
-        lines.append("")
-        lines.append("팔 간섭: 미검사 (check_hit 를 켜면 훑는다)")
-        if PARTS:
-            lines.append("실물 형상:   파트 {}개  면 {:,}개  ({})".format(
-                len(PARTS), rbb.face_count(PARTS), parts_note))
-            lines.append("             <- 메시를 복제하지 않고 좌표계를 옮겨 그린다")
-        else:
-            lines.append("실물 형상:   없음 — {}".format(parts_note))
+        lines.append("실물 형상:   없음 — {}".format(parts_note))
+
     lines.append("")
-    lines.append(pb.report(timeline))
+    lines.append("판정 (AMv1 Check 에서 받은 것):")
+    if warn:
+        for w in warn:
+            lines.append("  - {}".format(w))
+    else:
+        lines.append("  ** 없다 — Check 의 warn 을 연결하세요.")
+        lines.append("     안 물리면 못 가는 위치도 되는 것처럼 보인다")
+    lines.append("  문제 구간 {}개".format(len(BAD)))
+    lines.append("  <- 도달·기구·간섭의 자세한 숫자는 AMv1 Check 의 report 에 있다")
+    lines.append("")
+    lines.append(pb.report(timeline, show_reach=False))
     lines.append("")
     lines.append("현재:        {:.2f} s  {}  {:.0f}%".format(
         s0["t"], s0["phase"], s0["progress"] * 100.0))
@@ -894,14 +739,6 @@ if step_mismatch:
         "   어느 포즈가 어느 타겟인지 알 수 없으므로 이송 시간을 못 쓰고",
         "   관절 시간만 썼다. 시간이 실제보다 짧게 나온다.",
         "   step=1 로 다시 계산할 것.",
-    ]
-
-if err_mismatch:
-    lines += [
-        "",
-        "** reach_err {}개 != 포즈 {}개 — 어느 타겟의 오차인지 알 수 없어".format(
-            len(globals().get("reach_err") or []), len(pose_list)),
-        "   버렸다. 도달 판정을 하지 못한다.",
     ]
 
 lines += info_extra

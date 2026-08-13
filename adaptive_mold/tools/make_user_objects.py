@@ -50,7 +50,7 @@ except Exception:
 TAB = "LJKS"
 
 # (닉네임, 서브카테고리, 아이콘 그리기 함수 이름)
-# 넷을 한 그룹(AMv1)에 둔다 — 개수가 적어 나누면 리본이 오히려 흩어진다.
+# 전부 한 그룹(AMv1)에 둔다 — 개수가 적어 나누면 리본이 오히려 흩어진다.
 # 늘어나면 그때 쪼갠다.
 SUB = "AMv1"
 COMPONENTS = [
@@ -59,6 +59,8 @@ COMPONENTS = [
     ("AMv1 PathFrames", SUB, "draw_frames"),
     ("AMv1 Robot",      SUB, "draw_robot"),
     ("AMv1 Play",       SUB, "draw_play"),
+    ("AMv1 Base",       SUB, "draw_base"),
+    ("AMv1 Check",      SUB, "draw_check"),
 ]
 
 
@@ -157,9 +159,35 @@ def draw_play():
     return bmp
 
 
+def draw_base():
+    """베이스 원 + 방향 화살 — 위치와 방향을 정한다는 뜻."""
+    bmp, g = _canvas()
+    p = sd.Pen(SOFT, 1.8)
+    g.DrawEllipse(p, 3.0, 8.0, 12.0, 12.0)                 # 발자국
+    ap = sd.Pen(ACC, 2.0)
+    g.DrawLine(ap, 9.0, 14.0, 21.0, 6.0)                   # 방향
+    g.FillEllipse(sd.SolidBrush(ACC), 7.5, 12.5, 3.0, 3.0)  # 원점
+    g.Dispose()
+    return bmp
+
+
+def draw_check():
+    """체크 표시 + 눈금 — 판정한다는 뜻."""
+    bmp, g = _canvas()
+    p = sd.Pen(ACC, 2.6)
+    g.DrawLine(p, 4.0, 13.0, 9.0, 18.0)
+    g.DrawLine(p, 9.0, 18.0, 20.0, 5.0)
+    sp = sd.Pen(SOFT, 1.4)
+    for y in (20.0, 22.0):                                 # 여유 눈금
+        g.DrawLine(sp, 3.0, y, 21.0, y)
+    g.Dispose()
+    return bmp
+
+
 DRAW = {{"draw_mold": draw_mold, "draw_path": draw_path,
         "draw_frames": draw_frames, "draw_robot": draw_robot,
-        "draw_play": draw_play}}
+        "draw_play": draw_play, "draw_base": draw_base,
+        "draw_check": draw_check}}
 
 folder = ghk.Folders.DefaultUserObjectFolder
 lines.append("folder: %s" % folder)

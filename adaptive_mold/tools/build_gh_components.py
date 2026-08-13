@@ -51,6 +51,9 @@ except Exception:
 # 입력: (닉네임, 힌트, list접근?, 위젯)
 #   힌트 None = 지정하지 않는다 (기존 것을 그대로 둔다)
 #   위젯: None | ("slider", lo, hi, val, digits) | ("toggle", val) | ("path",)
+#
+# **판정 입력은 여기 없다.** 도달·기구·간섭은 AMv1 Check 로 옮겼다. Play 는
+# Check 가 준 warn(문장)·bad(구간 인덱스)만 받아 그린다.
 PLAY_INPUTS = [
     ("platform_path", "GH_StringHint_CS",  False, ("path",)),
     ("pin_tops",      "GH_Point3dHint",    True,  None),
@@ -58,15 +61,11 @@ PLAY_INPUTS = [
     ("pin_home",      "GH_DoubleHint_CS",  False, ("slider", 0, 400, 0, 0)),
     ("pin_speed",     "GH_DoubleHint_CS",  False, ("slider", 5, 300, 50, 0)),
     ("poses",         "GH_DoubleHint_CS",  True,  None),
-    ("reach_err",     "GH_DoubleHint_CS",  True,  None),
     ("targets",       "GH_PlaneHint",      True,  None),
     ("move_kind",     "GH_StringHint_CS",  True,  None),
-    ("robot_base",    "GH_PlaneHint",      False, None),
-    ("base_pt",       "GH_Point3dHint",    False, None),
-    # **Curve 로 받는다.** Rhino 에서 선은 LineCurve 객체이고, GH_Line 은 Rhino
-    # 객체를 참조할 수 없다(실측). Line 힌트를 걸면 참조가 끊겨 선을 돌려도
-    # 방향이 안 바뀐다. robot._direction_of 가 Curve·Line·Vector 를 다 받는다.
-    ("base_dir",      "GH_CurveHint",      False, None),
+    ("robot_plane",   "GH_PlaneHint",      False, None),
+    ("warn",          "GH_StringHint_CS",  True,  None),
+    ("bad",           "GH_IntegerHint_CS", True,  None),
     ("feed",          "GH_DoubleHint_CS",  False, ("slider", 5, 300, 50, 0)),
     ("joint_scale",   "GH_DoubleHint_CS",  False, ("slider", 0.05, 1.0, 0.25, 2)),
     ("dwell",         "GH_DoubleHint_CS",  False, ("slider", 0, 10, 1, 1)),
@@ -80,8 +79,35 @@ PLAY_INPUTS = [
     ("solo",          "GH_BooleanHint_CS", False, ("toggle", True)),
     ("show_body",     "GH_BooleanHint_CS", False, ("toggle", True)),
     ("parts_file",    "GH_StringHint_CS",  False, None),
+]
+
+# AMv1 Base — 베이스 평면을 한 곳에서 정한다.
+# base_dir 은 **Curve 로 받는다.** Rhino 에서 선은 LineCurve 객체이고, GH_Line 은
+# Rhino 객체를 참조할 수 없다(실측). Line 힌트를 걸면 참조가 끊겨 선을 돌려도
+# 방향이 안 바뀐다. robot._direction_of 가 Curve·Line·Vector 를 다 받는다.
+BASE_INPUTS = [
+    ("platform_path", "GH_StringHint_CS",  False, ("path",)),
+    ("targets",       "GH_PlaneHint",      True,  None),
+    ("robot_base",    "GH_PlaneHint",      False, None),
+    ("base_pt",       "GH_Point3dHint",    False, None),
+    ("base_dir",      "GH_CurveHint",      False, None),
+    ("pin_tops",      "GH_Point3dHint",    True,  None),
+]
+
+# AMv1 Check — 판정 전용. 무거운 것(간섭)은 토글로 잠근다.
+CHECK_INPUTS = [
+    ("platform_path", "GH_StringHint_CS",  False, ("path",)),
+    ("robot_plane",   "GH_PlaneHint",      False, None),
+    ("poses",         "GH_DoubleHint_CS",  True,  None),
+    ("reach_err",     "GH_DoubleHint_CS",  True,  None),
+    ("targets",       "GH_PlaneHint",      True,  None),
+    ("move_kind",     "GH_StringHint_CS",  True,  None),
+    ("pin_tops",      "GH_Point3dHint",    True,  None),
+    ("feed",          "GH_DoubleHint_CS",  False, ("slider", 5, 300, 50, 0)),
+    ("joint_scale",   "GH_DoubleHint_CS",  False, ("slider", 0.05, 1.0, 0.25, 2)),
     ("mold_srf",      "GH_BrepHint",       False, None),
     ("stack",         "GH_DoubleHint_CS",  False, ("slider", 0, 100, 28, 0)),
+    ("parts_file",    "GH_StringHint_CS",  False, None),
     ("check_hit",     "GH_BooleanHint_CS", False, ("toggle", False)),
     ("hit_margin",    "GH_DoubleHint_CS",  False, ("slider", 0, 200, 30, 0)),
     ("hit_step",      "GH_IntegerHint_CS", False, ("slider", 1, 50, 1, 0)),
@@ -104,6 +130,47 @@ ROBOT_INPUTS = [
 ]
 
 SPECS = {
+    # 순서가 중요하다 — Base 를 먼저 만들어야 Check·Play 가 그 출력에 물린다.
+    "Base": {
+        "nick": "AMv1 Base",
+        "code": os.path.join(SCRIPTS, "AMv1_Base.py"),
+        "inputs": BASE_INPUTS,
+        "outputs": ["plane", "circle", "overlap", "info"],
+        "reorder": True,
+        "anchor": "AMv1 Robot",
+        "wiring": [
+            ("targets",  "AMv1 RollerPath", "targets"),
+            ("pin_tops", "AMv1 Inspect",    "pin_tops"),
+        ],
+        "share": [
+            ("platform_path", "AMv1 Inspect", "platform_path"),
+            # 기존에 Robot 에 물려 둔 점·선을 그대로 물려받는다 — 사용자가
+            # Rhino 에서 잡아 둔 자리를 잃지 않는다.
+            ("base_pt",       "AMv1 Robot",   "base_pt"),
+            ("base_dir",      "AMv1 Robot",   "base_dir"),
+        ],
+    },
+    "Check": {
+        "nick": "AMv1 Check",
+        "code": os.path.join(SCRIPTS, "AMv1_Check.py"),
+        "inputs": CHECK_INPUTS,
+        "outputs": ["report", "ok", "warn", "bad", "j_margin", "min_clear",
+                    "min_override", "fail_pts", "hit_pts"],
+        "reorder": True,
+        "anchor": "AMv1 Base",
+        "wiring": [
+            ("robot_plane", "AMv1 Base",       "plane"),
+            ("poses",       "AMv1 Robot",      "poses"),
+            ("reach_err",   "AMv1 Robot",      "reach_err"),
+            ("targets",     "AMv1 RollerPath", "targets"),
+            ("move_kind",   "AMv1 RollerPath", "move_kind"),
+            ("pin_tops",    "AMv1 Inspect",    "pin_tops"),
+        ],
+        "share": [
+            ("platform_path", "AMv1 Inspect",    "platform_path"),
+            ("mold_srf",      "AMv1 RollerPath", "mold_srf"),
+        ],
+    },
     "Play": {
         "nick": "AMv1 Play",
         "code": os.path.join(SCRIPTS, "AMv1_Play.py"),
@@ -111,22 +178,20 @@ SPECS = {
         "outputs": ["pins", "deck", "links", "body", "tcp", "roller",
                     "duration", "info"],
         "reorder": True,
-        "anchor": "AMv1 Robot",
+        "anchor": "AMv1 Check",
         "wiring": [
-            ("pin_tops",  "AMv1 Inspect",    "pin_tops"),
-            ("poses",     "AMv1 Robot",      "poses"),
-            ("reach_err", "AMv1 Robot",      "reach_err"),
-            ("targets",   "AMv1 RollerPath", "targets"),
-            ("move_kind", "AMv1 RollerPath", "move_kind"),
+            ("pin_tops",    "AMv1 Inspect",    "pin_tops"),
+            ("poses",       "AMv1 Robot",      "poses"),
+            ("targets",     "AMv1 RollerPath", "targets"),
+            ("move_kind",   "AMv1 RollerPath", "move_kind"),
+            ("robot_plane", "AMv1 Base",       "plane"),
+            ("warn",        "AMv1 Check",      "warn"),
+            ("bad",         "AMv1 Check",      "bad"),
         ],
         "share": [
             ("platform_path", "AMv1 Inspect",    "platform_path"),
             ("base_plane",    "AMv1 Inspect",    "base_plane"),
-            ("robot_base",    "AMv1 Robot",      "robot_base"),
-            ("base_pt",       "AMv1 Robot",      "base_pt"),
-            ("base_dir",      "AMv1 Robot",      "base_dir"),
             ("roller_d",      "AMv1 RollerPath", "roller_d"),
-            ("mold_srf",      "AMv1 RollerPath", "mold_srf"),
         ],
     },
     "Robot": {
@@ -136,7 +201,10 @@ SPECS = {
         "outputs": None,          # 건드리지 않는다
         "reorder": False,
         "anchor": None,
-        "wiring": [],
+        # **베이스 평면을 Base 에서 받는다.** robot_base 가 최우선이므로
+        # 이것만 물리면 Robot·Check·Play 가 같은 자리를 본다. 기존 base_pt/
+        # base_dir 입력은 남지만 우선순위에서 밀려 무해하다.
+        "wiring": [("robot_base", "AMv1 Base", "plane")],
         "share": [],
     },
 }

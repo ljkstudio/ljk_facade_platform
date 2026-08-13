@@ -298,8 +298,13 @@ def build(pin_bases=None, pin_h_start=None, pin_h_end=None,
     return Timeline(pins=pins, robot_phase=rp, dwell=dwell)
 
 
-def report(tl):
-    """타임라인 요약 — 컴포넌트 info 에 그대로 쓴다."""
+def report(tl, show_reach=True):
+    """타임라인 요약 — 컴포넌트 info 에 그대로 쓴다.
+
+    `show_reach=False` 면 도달 판정 줄을 뺀다. 도달을 **다른 컴포넌트가**
+    보는 구성(AMv1 Check)에서는 여기서 "연결하지 않았다"고 적으면 거짓말이
+    된다 — 연결이 필요한 곳은 그쪽이다.
+    """
     lines = []
     if tl.pins is not None:
         p = tl.pins
@@ -322,7 +327,9 @@ def report(tl):
             len(r.dt) - n_feed, t_joint, r.joint_scale * 100.0))
         lines.append("             <- 성형은 공정 속도가, 공중 이동은 관절 속도가")
         lines.append("                지배한다. 느린 쪽이 실제 시간이다")
-        if r.errors:
+        if not show_reach:
+            pass
+        elif r.errors:
             bad = r.failed_indices()
             lines.append("도달:        실패 {}개 / {}개  ({:.1f}%)  최대 {:.1f} mm".format(
                 len(bad), len(r.errors),
