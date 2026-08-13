@@ -58,3 +58,12 @@ def test_describe_marks_unset_judgment_fields_as_unjudged():
     """미판정을 통과로 치지 않는다."""
     text = mt.MaterialProps().describe()
     assert "미판정" in text
+
+
+def test_describe_survives_a_missing_penalty():
+    """_validate 가 None 을 예상 입력으로 다루므로 describe() 도 다뤄야 한다.
+    물성이 잘못됐을수록 진단이 더 필요한데, 여기서 죽으면 사용자는 예외만 본다."""
+    p = mt.MaterialProps(wrinkle_penalty=None)
+    assert not p.ok
+    text = p.describe()
+    assert "wrinkle_penalty" in text

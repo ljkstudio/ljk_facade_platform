@@ -61,9 +61,15 @@ class MaterialProps(object):
         # type: () -> str
         """무엇이 형상을 바꿨고 무엇이 기록일 뿐인지 말한다."""
         lines = ["재료: %s" % (self.name or "(이름 없음)")]
-        lines.append("  [형상] wrinkle_penalty = %g%s"
-                     % (self.wrinkle_penalty,
-                        "" if self.wrinkle_penalty > 1.0 else "  (1.0 — 순수 ARAP, 벌점 없음)"))
+        if self.wrinkle_penalty is None:
+            # _validate 가 None 을 예상 입력으로 다루므로 여기서도 다뤄야 한다.
+            # 물성이 잘못됐을수록 describe() 는 **더** 말을 해야 한다 — 여기서
+            # 죽으면 진단이 통째로 사라지고 사용자는 예외만 본다.
+            lines.append("  [형상] wrinkle_penalty 없음 — 잘못된 물성이다 (problems 참조)")
+        else:
+            lines.append("  [형상] wrinkle_penalty = %g%s"
+                         % (self.wrinkle_penalty,
+                            "" if self.wrinkle_penalty > 1.0 else "  (1.0 — 순수 ARAP, 벌점 없음)"))
         if self.elong_max is None:
             lines.append("  [판정] elong_max 없음 — 찢어짐 **미판정**")
         else:
