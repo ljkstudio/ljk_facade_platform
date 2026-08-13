@@ -53,6 +53,24 @@ Rhino 레이어 `robot_base`에 점·선을 만들고 GH 파라미터로 **참�
 방향 선은 `Param_Curve`로 받습니다 — `Param_Line`은 Rhino 객체를 참조하지 못해
 값이 박히고, 선을 돌려도 방향이 바뀌지 않습니다.
 
+### 위치를 자동으로 찾기
+
+```
+python adaptive_mold/tools/search_base.py --polar 1600,2400,200 --angles 0,330,30
+python adaptive_mold/tools/search_base.py --polar 1800,2000,100 --angles 150,210,15 --apply
+```
+
+몰드 중심 기준 **고리**를 훑어 도달·간섭·가동범위·이송을 모두 통과하는 자리를
+찾고 관절 여유가 큰 순서로 보고합니다(지도 + 상위 목록). 사각 격자(`--step`/
+`--span`)도 되지만 가능한 자리가 고리 모양이라 대부분을 헛돕니다.
+
+**후보당 약 8초**입니다(기각되는 자리가 더 느립니다 — IK가 수렴하지 못해 반복을
+다 씁니다). 진행 상황은 `adaptive_mold/grasshopper/_search_base_log.txt`에
+흘려 쓰므로 도는 중에 볼 수 있습니다.
+
+`--apply`는 `robot_base_pt`를 최적점으로 옮기고 **방향선도 같이 맞춥니다** —
+점만 옮기면 살아 있는 파이프라인은 옛 선 방향을 써서 탐색한 자세와 달라집니다.
+
 ## 파라미터 관리
 
 ```
