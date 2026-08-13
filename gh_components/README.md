@@ -21,7 +21,9 @@ GhPython 컴포넌트용 **RunScript 파일**은 `gh_scripts/` 폴더에 있습�
 
 **툴팁은 `.gh`가 보관하지 못합니다.** Rhino를 다시 켤 때마다 사라지므로 문서를 열면
 `adaptive_mold/tools/apply_param_docs.py`를 한 번 돌리는 것이 정상 절차입니다
-(정본: `param_docs.py`, 현재 112개).
+(정본: `param_docs.py`, 현재 125개).
+
+개발 절차 전체는 스킬 `~/.claude/skills/gh-component-dev/` 에 정리해 두었습니다.
 
 ## 파이프라인 연결
 
