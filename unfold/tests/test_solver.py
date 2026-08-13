@@ -96,16 +96,50 @@ def test_pure_and_numpy_paths_agree():
     assert pure == pytest.approx(fast, abs=1e-8)
 
 
-def test_warm_start_reduces_iterations():
-    """ARAP 반복 사이에 b 가 조금만 바뀐다 — 그때 warm start 가 값어치를 한다."""
+def grid_laplacian(k):
+    """(k × k) 격자의 라플라시안. 워엄 스타트가 실제로 값어치를 하는 형태다."""
+    n = k * k
+    sp = sv.Sparse(n)
+    for j in range(k):
+        for i in range(k):
+            a = j * k + i
+            for di, dj in ((1, 0), (0, 1)):
+                if i + di < k and j + dj < k:
+                    b = (j + dj) * k + (i + di)
+                    sp.add(a, a, 1.0); sp.add(b, b, 1.0)
+                    sp.add(a, b, -1.0); sp.add(b, a, -1.0)
+    return sp
+
+
+def test_warm_start_from_the_exact_solution_costs_nothing():
+    """이미 답을 알고 시작하면 반복이 0 이어야 한다 — x0 가 실제로 쓰인다는 증거."""
     n = 60
     sp = path_laplacian(n)
+    sp.pin(0)
+    b = [0.0] * n; b[n - 1] = 1.0
+    x, _cold = sv.cg(sp.matvec, b, tol=1e-12, maxiter=5000)
+    _again, iters = sv.cg(sp.matvec, b, x0=x, tol=1e-12, maxiter=5000)
+    assert iters == 0
+
+
+def test_warm_start_reduces_iterations_on_a_2d_laplacian():
+    """ARAP 반복 사이에 b 가 조금만 바뀐다 — 그때 warm start 가 값어치를 한다.
+
+    **1차원 사슬로는 이걸 보일 수 없다** [실측 2026-08-14]. 사슬에서는 matvec 한
+    번이 정보를 한 칸씩만 옮기므로 CG 가 n 회를 꽉 채워야 하고, 워엄 스타트든
+    아니든 똑같다 — n=60 에서 59회, n=200 에서 199회로 **차이가 0** 이었다.
+    격자에서는 줄어든다: 12×12 는 59→54, 24×24 는 128→116.
+    실제 쓰임(메쉬 라플라시안)이 격자 쪽이므로 그쪽으로 검사한다.
+    """
+    k = 12
+    n = k * k
+    sp = grid_laplacian(k)
     sp.pin(0)
     b1 = [0.0] * n; b1[n - 1] = 1.0
     x1, cold = sv.cg(sp.matvec, b1, tol=1e-12, maxiter=5000)
     b2 = list(b1); b2[n - 1] = 1.001
     _x2, warm = sv.cg(sp.matvec, b2, x0=x1, tol=1e-12, maxiter=5000)
-    assert warm < cold
+    assert warm < cold, "cold=%d warm=%d" % (cold, warm)
 
 
 def test_cg_reports_when_it_did_not_converge():
