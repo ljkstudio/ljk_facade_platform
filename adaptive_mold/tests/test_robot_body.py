@@ -149,31 +149,136 @@ def test_base_plane_offset():
     print("PASS: test_base_plane_offset")
 
 
-def test_balancer_follows_j1_only_partly():
-    """밸런서는 j1 을 그대로 따르고 j2 는 배율만큼만 받는다."""
-    x1 = rbb.part_transforms(_pose(j1=90.0))
-    a = rg.Point3d(0.0, 0.0, 1000.0)
-    b = rg.Point3d(a)
-    b.Transform(x1["cylinder"])
-    c = rg.Point3d(a)
-    c.Transform(x1["link1"])
-    assert b.DistanceTo(c) < TOL, (b, c)      # j1 만 있으면 link1 과 같다
+def test_balancer_mount_never_moves():
+    """실린더 마운트는 link1 에 고정이다 — j2 로는 절대 움직이지 않는다.
 
-    x2 = rbb.part_transforms(_pose(j2=40.0))
-    d = rg.Point3d(0.0, 0.0, 1000.0)
-    d.Transform(x2["cylinder"])
-    e = rg.Point3d(0.0, 0.0, 1000.0)
-    e.Transform(x2["link2"])
-    assert d.DistanceTo(e) > 1.0, "j2 를 그대로 받고 있다"
-    assert rbb.BALANCER_MIMIC == -0.25
-    print("PASS: test_balancer_follows_j1_only_partly")
+    **옛 구현이 여기서 깨졌다**(j2=78 에서 295 mm 이동). 프레임에 볼트로
+    고정된 점이 움직이면 눈에 그대로 보인다.
+    """
+    mount = rg.Point3d(*rbb.BALANCER_MOUNT_MM)
+    for j2 in (-17.0, 0.0, 30.0, 78.0):
+        xfs = rbb.part_transforms(_pose(j2=j2))
+        q = rg.Point3d(mount)
+        q.Transform(xfs["cylinder"])
+        assert mount.DistanceTo(q) < TOL, (j2, mount, q)
+    print("PASS: test_balancer_mount_never_moves")
 
 
-def test_cylinder_and_rod_share_frame():
-    """실린더와 로드는 같은 프레임이다 (어긋나 보이지 않게)."""
-    xfs = rbb.part_transforms(_pose(j2=55.0, j1=-30.0))
-    assert _xf_max_diff(xfs["cylinder"], xfs["rod"]) < TOL_XF
-    print("PASS: test_cylinder_and_rod_share_frame")
+def test_balancer_mount_follows_j1():
+    """j1 은 그대로 따른다 — 캐러셀에 실려 있으므로."""
+    mount = rg.Point3d(*rbb.BALANCER_MOUNT_MM)
+    xfs = rbb.part_transforms(_pose(j1=90.0))
+    a = rg.Point3d(mount)
+    a.Transform(xfs["cylinder"])
+    b = rg.Point3d(mount)
+    b.Transform(xfs["link1"])
+    assert a.DistanceTo(b) < TOL, (a, b)
+    assert a.DistanceTo(mount) > 100.0, "j1 을 안 따라간다"
+    print("PASS: test_balancer_mount_follows_j1")
+
+
+def test_rod_tip_stays_pinned_to_link2():
+    """로드 앞끝은 link2 의 핀 자리에 **정확히** 붙어 있어야 한다.
+
+    이것이 이 리깅의 핵심 불변식이다 — 부호가 틀리면 여기서 바로 깨진다.
+    옛 구현은 j2=78 에서 232 mm 벌어졌다.
+    """
+    pin = rg.Point3d(*rbb.BALANCER_PIN_MM)
+    for j1 in (0.0, -30.0, 120.0):
+        for j2 in (-17.0, 0.0, 25.0, 52.9, 78.0):
+            xfs = rbb.part_transforms(_pose(j1=j1, j2=j2))
+            a = rg.Point3d(pin)
+            a.Transform(xfs["rod"])
+            b = rg.Point3d(pin)
+            b.Transform(xfs["link2"])
+            assert a.DistanceTo(b) < 1e-3, (j1, j2, a.DistanceTo(b))
+    print("PASS: test_rod_tip_stays_pinned_to_link2")
+
+
+def test_cylinder_and_rod_stay_collinear():
+    """실린더와 로드는 한 축 위에 있어야 한다 — 어긋나 보이면 안 된다.
+
+    이제 두 변환이 다르다(로드가 미끄러진다). 같은지 보는 대신 **축이 같은지**
+    본다.
+
+    **정확히 1 이 아니다.** 유도한 밸런서 축이 x-z 평면에서 0.43° 벗어나 있고
+    (mount y -195.88 / pin y -190.56, 715 mm 에 5.3 mm 드리프트), 신장은 y 를
+    보존하는 x-z 안에서 일어난다. 그래서 최대 신장에서 약 1 mm 어긋난다 —
+    보이지 않는 크기이고, 대신 로드 앞끝이 핀에 **정확히** 붙는다.
+    0.43° 를 0 으로 가정해 축을 억지로 맞추면 그 보장이 깨진다.
+    """
+    mount = rg.Point3d(*rbb.BALANCER_MOUNT_MM)
+    pin = rg.Point3d(*rbb.BALANCER_PIN_MM)
+    for j2 in (-17.0, 30.0, 78.0):
+        xfs = rbb.part_transforms(_pose(j1=-30.0, j2=j2))
+        m = rg.Point3d(mount)
+        m.Transform(xfs["cylinder"])
+        p = rg.Point3d(pin)
+        p.Transform(xfs["rod"])
+        # 로드를 회전만 시킨 점(신장 전)도 같은 축 위에 있어야 한다
+        r0 = rg.Point3d(mount)
+        r0.Transform(xfs["rod"])
+        v1 = rg.Vector3d(p - m)
+        v2 = rg.Vector3d(r0 - m)
+        if v2.Length < 1e-9:
+            continue
+        v1.Unitize()
+        v2.Unitize()
+        # 0.43° 면외 기울기 = dot 0.99997. 1e-4 는 그것을 담고
+        # 진짜 어긋남(수 도)은 잡는 폭이다.
+        assert abs(v1 * v2 - 1.0) < 1e-4, (j2, v1 * v2)
+    print("PASS: test_cylinder_and_rod_stay_collinear")
+
+
+def test_extension_is_zero_at_rest_and_grows_with_j2():
+    """영각에서 0, j2 가 커지면 늘어난다. 문서 행정(150 mm) 안이어야 한다."""
+    assert abs(rbb.balancer_extension_mm(_pose())) < 1e-6
+    prev = None
+    for j2 in (0.0, 20.0, 40.0, 60.0, 78.0):
+        e = rbb.balancer_extension_mm(_pose(j2=j2))
+        assert e >= -1e-6, (j2, e)
+        if prev is not None:
+            assert e > prev, "j2 가 커졌는데 안 늘어난다: {} -> {}".format(prev, e)
+        prev = e
+    assert prev < 150.0, "행정 초과 {:.1f} mm".format(prev)
+    assert prev > 100.0, "너무 조금 늘어난다 {:.1f} mm".format(prev)
+    print("PASS: test_extension_is_zero_at_rest_and_grows_with_j2 "
+          "(최대 {:.1f}mm)".format(prev))
+
+
+def test_extension_does_not_depend_on_j1():
+    """j1 은 밸런서 삼각형을 통째로 돌릴 뿐 신장을 바꾸지 않는다."""
+    a = rbb.balancer_extension_mm(_pose(j1=0.0, j2=50.0))
+    b = rbb.balancer_extension_mm(_pose(j1=137.0, j2=50.0))
+    assert abs(a - b) < 1e-6, (a, b)
+    print("PASS: test_extension_does_not_depend_on_j1")
+
+
+def test_pivots_derived_from_mesh_match_constants():
+    """상수는 형상에서 유도한 값이다 — 원본이 바뀌면 여기가 먼저 깨진다."""
+    parts = rbb.load_parts(PARTS_3DM)
+    mount, pin = rbb.balancer_pivots_from_parts(parts)
+    assert mount is not None and pin is not None
+    m0 = rg.Point3d(*rbb.BALANCER_MOUNT_MM)
+    p0 = rg.Point3d(*rbb.BALANCER_PIN_MM)
+    assert mount.DistanceTo(m0) < 0.5, (mount, m0)
+    assert pin.DistanceTo(p0) < 0.5, (pin, p0)
+    print("PASS: test_pivots_derived_from_mesh_match_constants "
+          "(mount {:.2f}mm / pin {:.2f}mm 차이)".format(
+              mount.DistanceTo(m0), pin.DistanceTo(p0)))
+
+
+def test_derived_pivots_can_be_passed_in():
+    """메시를 들고 있는 쪽은 유도값을 넘길 수 있다 (하드코딩에 묶이지 않는다)."""
+    parts = rbb.load_parts(PARTS_3DM)
+    bal = rbb.balancer_pivots_from_parts(parts)
+    xfs = rbb.part_transforms(_pose(j2=60.0), balancer=bal)
+    a = rg.Point3d(bal[1])
+    a.Transform(xfs["rod"])
+    b = rg.Point3d(bal[1])
+    b.Transform(xfs["link2"])
+    assert a.DistanceTo(b) < 1e-3, (a, b)
+    print("PASS: test_derived_pivots_can_be_passed_in")
 
 
 # ── 파일 ────────────────────────────────────────────────
@@ -239,8 +344,14 @@ TESTS = [
     test_agrees_with_link_lines,
     test_base_is_fixed,
     test_base_plane_offset,
-    test_balancer_follows_j1_only_partly,
-    test_cylinder_and_rod_share_frame,
+    test_balancer_mount_never_moves,
+    test_balancer_mount_follows_j1,
+    test_rod_tip_stays_pinned_to_link2,
+    test_cylinder_and_rod_stay_collinear,
+    test_extension_is_zero_at_rest_and_grows_with_j2,
+    test_extension_does_not_depend_on_j1,
+    test_pivots_derived_from_mesh_match_constants,
+    test_derived_pivots_can_be_passed_in,
     test_parts_file_loads,
     test_parts_are_in_mm_and_upright,
     test_posed_meshes_move,

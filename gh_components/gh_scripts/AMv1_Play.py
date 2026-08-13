@@ -179,6 +179,12 @@ if show_body:
 else:
     parts_note = "show_body=False — 스틱 피겨"
 
+# 밸런서 피벗을 **형상에서 유도한다.** 상수 기본값이 있지만, 메시를 들고 있으면
+# 유도값이 정확하고 원본 GLB 가 바뀌어도 따라간다.
+BAL = rbb.balancer_pivots_from_parts(PARTS) if PARTS else None
+if BAL and BAL[0] is None:
+    BAL = None
+
 
 C_PIN_MOVING = sd.Color.FromArgb(255, 235, 140, 40)
 C_PIN_DONE = sd.Color.FromArgb(255, 130, 140, 150)
@@ -400,7 +406,8 @@ def build_frame(t):
         if PARTS:
             # 변환만 만든다 — **메시를 복제하지 않는다.** 프레임마다 12만 면을
             # 복제하면 재생이 늘어진다. 그리기는 PushModelTransform 이 한다.
-            part_xf = rbb.part_transforms(pose, base_plane=robot_plane)
+            part_xf = rbb.part_transforms(pose, base_plane=robot_plane,
+                                          balancer=BAL)
 
     return {"s": s, "pins": pin_lines, "moving": moving, "deck": deck,
             "links": lks, "tcp": tcp_pl, "roller": roller_crv,
@@ -552,7 +559,7 @@ roller = frame["roller"]
 body = []
 if PARTS and frame["part_xf"]:
     body = [m for _n, m in rbb.posed_meshes(
-        PARTS, s0["pose"], base_plane=robot_plane)]
+        PARTS, s0["pose"], base_plane=robot_plane, balancer=BAL)]
 
 running = bool(play) and duration > 0
 
