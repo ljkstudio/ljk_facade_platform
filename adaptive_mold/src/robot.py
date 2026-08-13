@@ -156,6 +156,38 @@ def tcp_plane_mm(pose_deg):
 
 DEFAULT_BASE_OFFSET_MM = 1900.0
 
+# 베이스 원기둥의 반경 (mm). **실측**: irb6700_parts.3dm 의 base 파트 바운딩박스가
+# x[-627, 377], y[-360, 360] 이므로 원점에서 가장 먼 쪽이 627 mm 다.
+# 630 으로 잡아 조금 보수적으로 본다.
+BASE_RADIUS_MM = 630.0
+
+
+def base_overlap(base_plane, points, radius=BASE_RADIUS_MM):
+    """베이스가 몰드 영역과 평면상 겹치는 깊이 (mm). 0 이하면 안 겹친다.
+
+    **IK 는 간섭을 모른다.** 로봇을 몰드 한가운데 세워도 팔이 몰드를 통과해
+    타겟에 닿으면 "도달 성공"으로 센다(실측: 베이스를 몰드 위로 옮겼더니
+    668/1175 는 실패했지만 나머지 507 개는 성공으로 잡혔고, 그 자세들은 몸통이
+    몰드를 관통한다).
+
+    전면 간섭 검사는 무겁다. 그런데 **베이스가 몰드 영역과 겹치는 것만은
+    무조건 불가능**하므로, 그것만은 값싸게 잡을 수 있다. 이 함수가 그 몫이다.
+
+    `points` 는 몰드 영역을 대표하는 점들(핀 격자 등)이다. 월드 XY 로 투영한
+    축정렬 상자를 쓴다 — 회전한 몰드에서는 조금 보수적으로 나온다.
+    """
+    pts = [p for p in (points or []) if p is not None]
+    if not pts or base_plane is None:
+        return 0.0
+
+    xs = [p.X for p in pts]
+    ys = [p.Y for p in pts]
+    o = base_plane.Origin
+    dx = max(min(xs) - o.X, 0.0, o.X - max(xs))
+    dy = max(min(ys) - o.Y, 0.0, o.Y - max(ys))
+    dist = math.sqrt(dx * dx + dy * dy)
+    return radius - dist
+
 
 def default_base_plane(target_planes):
     """robot_base 를 주지 않았을 때 쓰는 베이스 — 타겟 박스 중심에서 -X로.

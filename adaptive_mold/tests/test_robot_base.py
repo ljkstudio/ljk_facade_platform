@@ -182,6 +182,83 @@ def test_auto_matches_default_helper():
     print("PASS: test_auto_matches_default_helper")
 
 
+# ── 베이스가 몰드와 겹치는지 ────────────────────────────
+
+def _footprint():
+    """1000x1000 핀 격자 (원점 0,0 ~ 1000,1000)."""
+    return [rg.Point3d(x, y, 0.0)
+            for x in (0.0, 500.0, 1000.0) for y in (0.0, 500.0, 1000.0)]
+
+
+def test_base_far_away_does_not_overlap():
+    pl = rg.Plane(rg.Point3d(-1400, 500, 0), rg.Vector3d.XAxis,
+                  rg.Vector3d.YAxis)
+    ov = rb.base_overlap(pl, _footprint())
+    # 상자까지 1400, 반경 630 -> -770
+    assert close(ov, 630.0 - 1400.0), ov
+    assert ov < 0.0
+    print("PASS: test_base_far_away_does_not_overlap")
+
+
+def test_base_inside_footprint_overlaps_by_radius():
+    """상자 안에 있으면 거리가 0이므로 겹침 = 반경."""
+    pl = rg.Plane(rg.Point3d(500, 500, 0), rg.Vector3d.XAxis,
+                  rg.Vector3d.YAxis)
+    ov = rb.base_overlap(pl, _footprint())
+    assert close(ov, rb.BASE_RADIUS_MM), ov
+    print("PASS: test_base_inside_footprint_overlaps_by_radius")
+
+
+def test_base_just_touching():
+    """상자에서 정확히 반경만큼 떨어지면 겹침 0 (경계)."""
+    pl = rg.Plane(rg.Point3d(-rb.BASE_RADIUS_MM, 500, 0),
+                  rg.Vector3d.XAxis, rg.Vector3d.YAxis)
+    assert close(rb.base_overlap(pl, _footprint()), 0.0), rb.base_overlap(
+        pl, _footprint())
+    print("PASS: test_base_just_touching")
+
+
+def test_base_overlap_uses_plan_distance_only():
+    """z 는 보지 않는다 — 평면상 겹침 판정이다.
+
+    로봇을 내려도(z=-500) 몰드 아래를 지나가는 것이 아니라 베이스가 여전히
+    같은 자리를 차지한다. z 로 피하는 것은 이 판정의 몫이 아니다.
+    """
+    a = rg.Plane(rg.Point3d(500, 500, 0), rg.Vector3d.XAxis, rg.Vector3d.YAxis)
+    b = rg.Plane(rg.Point3d(500, 500, -500), rg.Vector3d.XAxis,
+                 rg.Vector3d.YAxis)
+    assert close(rb.base_overlap(a, _footprint()),
+                 rb.base_overlap(b, _footprint()))
+    print("PASS: test_base_overlap_uses_plan_distance_only")
+
+
+def test_base_overlap_no_points():
+    """영역을 모르면 판정하지 않는다 — 0 을 돌려준다(경고하지 않음)."""
+    pl = rg.Plane(rg.Point3d(0, 0, 0), rg.Vector3d.XAxis, rg.Vector3d.YAxis)
+    assert close(rb.base_overlap(pl, []), 0.0)
+    assert close(rb.base_overlap(pl, None), 0.0)
+    print("PASS: test_base_overlap_no_points")
+
+
+def test_base_radius_matches_measured_mesh():
+    """반경이 실측 파트 크기와 맞는지 — 파일이 바뀌면 여기서 걸린다."""
+    import os
+    import robot_body as rbb
+    p = os.path.normpath(os.path.join(HERE, "..", "grasshopper",
+                                      "irb6700_parts.3dm"))
+    if not os.path.isfile(p):
+        print("PASS: test_base_radius_matches_measured_mesh (파일 없음, 생략)")
+        return
+    parts = rbb.load_parts(p)
+    bb = parts["base"].GetBoundingBox(True)
+    far = max(abs(bb.Min.X), abs(bb.Max.X), abs(bb.Min.Y), abs(bb.Max.Y))
+    assert far <= rb.BASE_RADIUS_MM + 1.0, (far, rb.BASE_RADIUS_MM)
+    assert far > rb.BASE_RADIUS_MM - 50.0, (
+        "반경이 실측보다 너무 크다: 실측 {:.0f} vs 설정 {:.0f}".format(
+            far, rb.BASE_RADIUS_MM))
+    print("PASS: test_base_radius_matches_measured_mesh (실측 {:.0f})".format(far))
+
+
 TESTS = [
     test_line_alone_gives_origin_and_direction,
     test_direction_is_unitized_and_y_is_left,
@@ -196,6 +273,12 @@ TESTS = [
     test_priority_point_line_beats_auto,
     test_priority_auto_when_nothing,
     test_auto_matches_default_helper,
+    test_base_far_away_does_not_overlap,
+    test_base_inside_footprint_overlaps_by_radius,
+    test_base_just_touching,
+    test_base_overlap_uses_plan_distance_only,
+    test_base_overlap_no_points,
+    test_base_radius_matches_measured_mesh,
 ]
 
 

@@ -49,6 +49,8 @@
 #   pin_home       float    핀 출발 높이, 없으면 0
 #   pin_speed      float    액추에이터 속도 mm/s, 없으면 50   <- 가정치
 #   poses          float*   AMv1 Robot 의 poses (6개씩 평탄, list)
+#   reach_err      float*   AMv1 Robot 의 reach_err — **연결할 것.**
+#                           없으면 못 닿는 위치도 되는 것처럼 보인다
 #   targets        Plane*   AMv1 RollerPath 의 targets (list)
 #   move_kind      str*     같은 순서의 구간 종류 (list)
 #   robot_base     Plane    로봇 베이스 평면. 비우면 base_pt/base_dir 를 본다
@@ -187,6 +189,9 @@ C_TODO = sd.Color.FromArgb(255, 190, 195, 200)
 C_HUD = sd.Color.FromArgb(255, 30, 30, 30)
 # ABB 그래파이트 화이트 — URDF material rgba(0.9255, 0.9255, 0.9059)
 C_BODY = sd.Color.FromArgb(255, 236, 236, 231)
+# 못 닿는 구간 — 로봇을 다른 색으로 칠한다. 자세만 보고는 구별이 안 된다
+C_BODY_BAD = sd.Color.FromArgb(255, 235, 150, 140)
+C_BAD = sd.Color.FromArgb(255, 220, 20, 20)
 
 
 # ── 이전 재생 정리 ──────────────────────────────────────
@@ -275,6 +280,7 @@ pin_pts = [p for p in (pin_tops or []) if p is not None]
 pose_flat = [float(v) for v in (poses or [])]
 tgts = [p for p in (targets or []) if p is not None]
 kinds = [str(k) for k in (move_kind or [])]
+errs = [float(e) for e in (globals().get("reach_err") or [])]
 
 pin_bases = []
 pin_h_end = []
@@ -333,13 +339,27 @@ robot_base, base_src = rb.resolve_base_plane(
     base_dir=globals().get("base_dir"),
     targets=tgts)
 
+# 오차 개수가 포즈 개수와 다르면 어느 타겟의 오차인지 알 수 없다 — 버린다.
+# 억지로 맞추면 엉뚱한 구간을 실패로 칠하게 되고, 그게 더 나쁘다.
+err_mismatch = bool(errs) and bool(pose_list) and len(errs) != len(pose_list)
+if err_mismatch:
+    errs = []
+
 timeline = pb.build(
     pin_bases=pin_bases, pin_h_start=pin_h_start, pin_h_end=pin_h_end,
     pin_speed=pin_speed,
     poses=pose_list, kinds=kinds, points=tgt_pts,
-    feed=feed, joint_scale=joint_scale, dwell=dwell)
+    feed=feed, joint_scale=joint_scale, dwell=dwell, errors=errs)
 
 duration = timeline.duration
+
+fail_idx = timeline.robot.failed_indices() if timeline.robot else []
+err_max = max(errs) if errs else 0.0
+
+# 베이스가 몰드 영역과 겹치면 그 위치는 물리적으로 불가능하다 — IK 는 이걸 모른다
+base_ov = rb.base_overlap(robot_base, pin_bases) if pin_bases else 0.0
+base_circle = rg.Circle(
+    rg.Plane(robot_base.Origin, rg.Vector3d.ZAxis), rb.BASE_RADIUS_MM)
 
 
 # ── 프레임 하나를 형상으로 ─────────────────────────────
@@ -438,13 +458,32 @@ class PlayConduit(rd.DisplayConduit):
             if seg + 1 < len(st["tgt_pts"]):
                 d.DrawPolyline(st["tgt_pts"][seg:], C_TODO, 1)
 
+        # ── 도달 실패 표시 ──────────────────────────────
+        # **못 닿는 자세도 그려진다.** IK 가 관절 한계에서 잘라내므로 팔은
+        # 그럴듯한 자세로 서 있고, 롤러만 판재에서 떠 있다. 그 차이는 눈으로
+        # 구별이 안 되므로 명시적으로 그린다.
+        bad = not s["reachable"]
+        if st["fail_pts"]:
+            d.DrawPoints(st["fail_pts"], rd.PointStyle.X, 4, C_BAD)
+
+        # 베이스 자리. 겹치면 붉게 — IK 가 통과해 버리는 종류의 불가능이다
+        ov = st["base_ov"]
+        d.DrawCircle(st["base_circle"], C_BAD if ov > 0 else C_PIN_DONE,
+                     4 if ov > 0 else 2)
+        if bad and f["tcp"] is not None and st["tgt_pts"]:
+            seg = min(s["seg"], len(st["tgt_pts"]) - 1)
+            # TCP 와 가려던 자리를 잇는다 — 이 선의 길이가 곧 오차다
+            d.DrawLine(rg.Line(f["tcp"].Origin, st["tgt_pts"][seg]), C_BAD, 3)
+            d.DrawPoint(st["tgt_pts"][seg], rd.PointStyle.RoundControlPoint,
+                        6, C_BAD)
+
         # ── 실물 형상 ────────────────────────────────────
         # **메시를 옮기지 않고 좌표계를 옮긴다.** Push/Pop 이면 원본을 그대로
         # 그릴 수 있어 프레임마다 12만 면을 복제하지 않는다.
         parts = st["parts"]
         drew_body = False
         if parts and f["part_xf"]:
-            mat = st["material"]
+            mat = st["material_bad"] if bad else st["material"]
             for name, mesh in parts.items():
                 xf = f["part_xf"].get(name)
                 if xf is None:
@@ -459,7 +498,7 @@ class PlayConduit(rd.DisplayConduit):
         # 스틱 피겨는 실물이 없을 때만 — 겹치면 실물 안쪽에 선이 비쳐 지저분하다
         if not drew_body:
             for ln in f["links"]:
-                d.DrawLine(ln, C_ROBOT, 5)
+                d.DrawLine(ln, C_BAD if bad else C_ROBOT, 5)
 
         if f["roller"] is not None:
             d.DrawCircle(f["roller"], C_ROLLER, 3)
@@ -479,6 +518,30 @@ class PlayConduit(rd.DisplayConduit):
         txt = [head, tail]
         for i, line in enumerate(txt):
             d.Draw2dText(line, C_HUD, rg.Point2d(14, 16 + i * 18), False, 14)
+
+        # 도달 판정은 눈에 띄어야 한다 — 이걸 안 적으면 못 가는 위치도
+        # 되는 것처럼 보인다
+        y = 16 + len(txt) * 18
+        if st["n_err"] == 0:
+            d.Draw2dText("도달 판정 없음 — reach_err 를 연결하세요",
+                         C_BAD, rg.Point2d(14, y), False, 14)
+        elif st["n_fail"]:
+            d.Draw2dText(
+                "도달 실패 {} / {} ({:.1f}%)   최대 {:.0f} mm{}".format(
+                    st["n_fail"], st["n_err"],
+                    100.0 * st["n_fail"] / st["n_err"], st["err_max"],
+                    "   << 지금 이 구간 {:.0f} mm".format(s["err"])
+                    if bad else ""),
+                C_BAD, rg.Point2d(14, y), False, 14)
+        else:
+            d.Draw2dText("도달 OK  최대 {:.1f} mm".format(st["err_max"]),
+                         C_HUD, rg.Point2d(14, y), False, 14)
+
+        if st["base_ov"] > 0:
+            d.Draw2dText(
+                "베이스가 몰드 영역과 {:.0f} mm 겹친다 — 세울 수 없는 자리다".format(
+                    st["base_ov"]),
+                C_BAD, rg.Point2d(14, y + 18), False, 14)
 
         st["draw_ms"] = sw.Elapsed.TotalMilliseconds - t0
         st["draws"] += 1
@@ -521,6 +584,14 @@ state = {
     "comp": ghenv.Component,
     "parts": PARTS,
     "material": rd.DisplayMaterial(C_BODY),
+    "material_bad": rd.DisplayMaterial(C_BODY_BAD),
+    "n_err": len(errs),
+    "n_fail": len(fail_idx),
+    "err_max": err_max,
+    "base_ov": base_ov,
+    "base_circle": base_circle,
+    # 실패 타겟 위치 — 못 가는 구간이 경로 어디인지 한눈에 보이게
+    "fail_pts": [tgt_pts[i] for i in fail_idx if i < len(tgt_pts)],
     "sw": System.Diagnostics.Stopwatch.StartNew(),
     "t0": float(t),
     "duration": duration,
@@ -646,6 +717,13 @@ else:
             robot_base.Origin.X, robot_base.Origin.Y, robot_base.Origin.Z,
             robot_base.XAxis.X, robot_base.XAxis.Y))
         lines.append("             <- AMv1 Robot 과 같은 입력이어야 한다")
+        if base_ov > 0:
+            lines.append("** 베이스가 몰드 영역과 {:.0f} mm 겹친다 — 세울 수 없다.".format(
+                base_ov))
+            lines.append("   IK 는 간섭을 모르므로 팔이 몰드를 통과해 닿는 것을")
+            lines.append("   '도달 성공'으로 센다. 베이스를 몰드 밖으로 옮길 것.")
+        else:
+            lines.append("             몰드 영역과 {:.0f} mm 여유".format(-base_ov))
         if PARTS:
             lines.append("실물 형상:   파트 {}개  면 {:,}개  ({})".format(
                 len(PARTS), rbb.face_count(PARTS), parts_note))
@@ -666,6 +744,14 @@ if step_mismatch:
         "   어느 포즈가 어느 타겟인지 알 수 없으므로 이송 시간을 못 쓰고",
         "   관절 시간만 썼다. 시간이 실제보다 짧게 나온다.",
         "   step=1 로 다시 계산할 것.",
+    ]
+
+if err_mismatch:
+    lines += [
+        "",
+        "** reach_err {}개 != 포즈 {}개 — 어느 타겟의 오차인지 알 수 없어".format(
+            len(globals().get("reach_err") or []), len(pose_list)),
+        "   버렸다. 도달 판정을 하지 못한다.",
     ]
 
 lines += info_extra

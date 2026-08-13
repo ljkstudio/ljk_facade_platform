@@ -266,6 +266,60 @@ def test_pins_only_has_no_pose():
     print("PASS: test_pins_only_has_no_pose")
 
 
+def test_error_lookup_takes_worse_end():
+    """구간 오차는 양 끝 중 큰 쪽 — 낙관적으로 잡으면 못 가는 걸 놓친다."""
+    poses = [_pose(), _pose(j1=1.0), _pose(j1=2.0)]
+    pts = [rg.Point3d(0, 0, 0), rg.Point3d(100, 0, 0), rg.Point3d(200, 0, 0)]
+    r = pb.RobotPhase(poses, kinds=["form"] * 3, points=pts,
+                      errors=[0.1, 50.0, 0.2], tol=2.0)
+    assert close(r.error_at(0), 50.0), r.error_at(0)   # 0.1 vs 50.0
+    assert close(r.error_at(1), 50.0), r.error_at(1)   # 50.0 vs 0.2
+    assert r.failed_indices() == [1], r.failed_indices()
+    print("PASS: test_error_lookup_takes_worse_end")
+
+
+def test_error_absent_means_unknown_not_ok():
+    """오차를 안 받았으면 None 이다 — 0 으로 채워 '괜찮다'고 하지 않는다."""
+    r = pb.RobotPhase([_pose(), _pose(j1=1.0)], kinds=["form"] * 2,
+                      points=[rg.Point3d(0, 0, 0), rg.Point3d(100, 0, 0)])
+    assert r.error_at(0) is None, r.error_at(0)
+    assert r.failed_indices() == [], r.failed_indices()
+    print("PASS: test_error_absent_means_unknown_not_ok")
+
+
+def test_sample_reports_reachable():
+    """sample 이 그 시점의 도달 여부를 알려줘야 한다."""
+    tl = pb.build(
+        poses=[_pose(), _pose(j1=1.0), _pose(j1=2.0)],
+        kinds=["form"] * 3,
+        points=[rg.Point3d(0, 0, 0), rg.Point3d(100, 0, 0),
+                rg.Point3d(200, 0, 0)],
+        feed=50.0, joint_scale=0.25, dwell=0.0,
+        errors=[0.1, 0.2, 99.0], tol=2.0)
+    s0 = tl.sample(0.5)          # 구간 0 (0.1, 0.2)
+    assert s0["reachable"] is True, s0
+    assert close(s0["err"], 0.2), s0["err"]
+    s1 = tl.sample(3.0)          # 구간 1 (0.2, 99.0)
+    assert s1["reachable"] is False, s1
+    assert close(s1["err"], 99.0), s1["err"]
+    print("PASS: test_sample_reports_reachable")
+
+
+def test_reachable_true_when_unknown():
+    """오차를 모르면 경고하지 않는다 — 다만 err 는 None 으로 남긴다.
+
+    모르는 것을 '실패'로 칠하면 오차를 연결하지 않은 사람에게 매번 거짓 경고가
+    간다. 대신 info 가 '판정하지 못했다'고 적는다.
+    """
+    tl = pb.build(poses=[_pose(), _pose(j1=1.0)], kinds=["form"] * 2,
+                  points=[rg.Point3d(0, 0, 0), rg.Point3d(100, 0, 0)],
+                  dwell=0.0)
+    s = tl.sample(1.0)
+    assert s["err"] is None, s["err"]
+    assert s["reachable"] is True, s
+    print("PASS: test_reachable_true_when_unknown")
+
+
 def test_timeline_pins_stay_up_during_robot():
     """로봇이 도는 동안 핀은 목표 높이에 그대로 있어야 한다.
 
@@ -320,6 +374,10 @@ TESTS = [
     test_timeline_phases,
     test_robot_visible_in_every_phase,
     test_pins_only_has_no_pose,
+    test_error_lookup_takes_worse_end,
+    test_error_absent_means_unknown_not_ok,
+    test_sample_reports_reachable,
+    test_reachable_true_when_unknown,
     test_timeline_pins_stay_up_during_robot,
     test_timeline_progress_monotonic,
     test_pins_only_timeline,

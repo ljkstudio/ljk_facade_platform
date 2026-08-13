@@ -130,16 +130,24 @@ class PinPhase(object):
         return n
 
 
+# 이보다 큰 위치 오차는 롤러가 판재에서 뜬 것으로 본다 (AMv1 Robot 과 같은 값)
+REACH_TOL_MM = 2.0
+
+
 class RobotPhase(object):
     """로봇이 타겟 열을 따라가는 구간."""
 
     def __init__(self, poses, kinds=None, points=None,
-                 feed=DEFAULT_FEED, joint_scale=DEFAULT_JOINT_SCALE):
+                 feed=DEFAULT_FEED, joint_scale=DEFAULT_JOINT_SCALE,
+                 errors=None, tol=REACH_TOL_MM):
         self.poses = list(poses)
         self.kinds = list(kinds) if kinds else []
         self.points = list(points) if points else []
         self.feed = float(feed) if feed > 0 else DEFAULT_FEED
         self.joint_scale = float(joint_scale)
+        # 타겟별 위치 오차 (mm). AMv1 Robot 의 reach_err 를 그대로 받는다.
+        self.errors = [float(e) for e in errors] if errors else []
+        self.tol = float(tol)
 
         self.dt = []              # 구간별 소요 시간
         self.dt_kind = []         # 그 구간을 지배한 것: "feed" | "joint"
@@ -166,6 +174,23 @@ class RobotPhase(object):
         if i < len(self.kinds):
             return str(self.kinds[i])
         return "form"
+
+    def error_at(self, seg):
+        """구간 seg 의 위치 오차 (mm). 오차를 안 받았으면 None.
+
+        **양 끝 중 큰 쪽을 쓴다.** 구간 안에서는 관절 공간 보간이라 오차가
+        어떻게 변하는지 모른다 — 한쪽 끝이 못 닿으면 그 구간은 못 닿는 것으로
+        본다. 낙관적으로 잡으면 "되는 것처럼 보이는" 바로 그 문제가 된다.
+        """
+        if not self.errors:
+            return None
+        a = seg if seg < len(self.errors) else len(self.errors) - 1
+        b = min(seg + 1, len(self.errors) - 1)
+        return max(self.errors[a], self.errors[b])
+
+    def failed_indices(self):
+        """허용오차를 넘은 타겟 인덱스."""
+        return [i for i, e in enumerate(self.errors) if e > self.tol]
 
     def sample(self, t):
         """(포즈, 구간 인덱스, 구간 내 비율) — 구간 경계를 이분 탐색."""
@@ -213,7 +238,7 @@ class Timeline(object):
         """
         t = max(0.0, float(t))
         out = {"t": t, "phase": "done", "heights": None, "pose": None,
-               "seg": 0, "frac": 0.0,
+               "seg": 0, "frac": 0.0, "err": None, "reachable": True,
                "progress": (t / self.duration) if self.duration > 0 else 1.0}
         if out["progress"] > 1.0:
             out["progress"] = 1.0
@@ -247,6 +272,9 @@ class Timeline(object):
         out["seg"] = seg
         out["frac"] = frac
         out["phase"] = "robot" if tr < self.robot.duration else "done"
+        err = self.robot.error_at(seg)
+        out["err"] = err
+        out["reachable"] = (err is None) or (err <= self.robot.tol)
         return out
 
 
@@ -254,7 +282,7 @@ def build(pin_bases=None, pin_h_start=None, pin_h_end=None,
           pin_speed=DEFAULT_PIN_SPEED,
           poses=None, kinds=None, points=None,
           feed=DEFAULT_FEED, joint_scale=DEFAULT_JOINT_SCALE,
-          dwell=1.0):
+          dwell=1.0, errors=None, tol=REACH_TOL_MM):
     """입력을 받아 Timeline 을 만든다. 없는 구간은 건너뛴다."""
     pins = None
     if pin_bases and pin_h_end:
@@ -264,7 +292,8 @@ def build(pin_bases=None, pin_h_start=None, pin_h_end=None,
     rp = None
     if poses:
         rp = RobotPhase(poses, kinds=kinds, points=points,
-                        feed=feed, joint_scale=joint_scale)
+                        feed=feed, joint_scale=joint_scale,
+                        errors=errors, tol=tol)
 
     return Timeline(pins=pins, robot_phase=rp, dwell=dwell)
 
@@ -293,6 +322,18 @@ def report(tl):
             len(r.dt) - n_feed, t_joint, r.joint_scale * 100.0))
         lines.append("             <- 성형은 공정 속도가, 공중 이동은 관절 속도가")
         lines.append("                지배한다. 느린 쪽이 실제 시간이다")
+        if r.errors:
+            bad = r.failed_indices()
+            lines.append("도달:        실패 {}개 / {}개  ({:.1f}%)  최대 {:.1f} mm".format(
+                len(bad), len(r.errors),
+                100.0 * len(bad) / len(r.errors), max(r.errors)))
+            if bad:
+                lines.append("             <- 못 닿는 자세는 그려지기는 한다.")
+                lines.append("                IK 가 관절 한계에서 잘라내므로 화면에서는")
+                lines.append("                그럴듯해 보인다 — 숫자로 판정할 것")
+        else:
+            lines.append("도달:        reach_err 를 연결하지 않아 판정하지 못했다")
+            lines.append("             <- 그러면 못 가는 위치도 되는 것처럼 보인다")
     lines.append("")
     lines.append("합계:        {:.1f} 초 ({:.1f} 분)".format(
         tl.duration, tl.duration / 60.0))

@@ -58,6 +58,7 @@ PLAY_INPUTS = [
     ("pin_home",      "GH_DoubleHint_CS",  False, ("slider", 0, 400, 0, 0)),
     ("pin_speed",     "GH_DoubleHint_CS",  False, ("slider", 5, 300, 50, 0)),
     ("poses",         "GH_DoubleHint_CS",  True,  None),
+    ("reach_err",     "GH_DoubleHint_CS",  True,  None),
     ("targets",       "GH_PlaneHint",      True,  None),
     ("move_kind",     "GH_StringHint_CS",  True,  None),
     ("robot_base",    "GH_PlaneHint",      False, None),
@@ -109,6 +110,7 @@ SPECS = {
         "wiring": [
             ("pin_tops",  "AMv1 Inspect",    "pin_tops"),
             ("poses",     "AMv1 Robot",      "poses"),
+            ("reach_err", "AMv1 Robot",      "reach_err"),
             ("targets",   "AMv1 RollerPath", "targets"),
             ("move_kind", "AMv1 RollerPath", "move_kind"),
         ],
