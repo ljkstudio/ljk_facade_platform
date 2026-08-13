@@ -1,0 +1,166 @@
+# -*- coding: utf-8 -*-
+"""희소 대칭 선형계를 켤레기울기로 푼다.
+
+**numpy 는 의존성이 아니라 가속기다.** Rhino 8 py39 site-packages 에 numpy 가
+없다는 것이 실측되어 있다(2026-08-14). 그래서 순수 파이썬 경로가 정본이고,
+numpy 가 있으면 같은 답을 더 빨리 낸다. 두 경로의 일치는 테스트가 지킨다.
+
+**왜 Cholesky 가 아니라 CG 인가.** 주름 벌점을 반복 재가중(IRLS)으로 넣기
+때문에 강성행렬이 매 반복 바뀐다 → 사전 분해를 재사용할 수 없다. 반면 CG 는
+직전 해에서 warm start 하면 수십 회에 수렴한다. 두 결정이 서로를 지지한다.
+"""
+
+import math
+
+try:
+    import numpy
+except ImportError:          # Rhino 8 py39 의 기본 상태
+    numpy = None
+
+HAS_NUMPY = numpy is not None
+FORCE_PURE = False           # 테스트가 순수 경로를 강제할 때 True
+
+
+class _Pure(object):
+    """리스트 기반 벡터 연산."""
+
+    @staticmethod
+    def asvec(x):
+        return [float(v) for v in x]
+
+    @staticmethod
+    def zeros(n):
+        return [0.0] * n
+
+    @staticmethod
+    def dot(a, b):
+        return sum(x * y for x, y in zip(a, b))
+
+    @staticmethod
+    def sub(a, b):
+        return [x - y for x, y in zip(a, b)]
+
+    @staticmethod
+    def axpy(s, x, y):
+        """s*x + y"""
+        return [s * xi + yi for xi, yi in zip(x, y)]
+
+
+class _Numpy(object):
+    """numpy 배열 기반. 인터페이스는 _Pure 와 같다."""
+
+    @staticmethod
+    def asvec(x):
+        return numpy.asarray(x, dtype=numpy.float64)
+
+    @staticmethod
+    def zeros(n):
+        return numpy.zeros(n, dtype=numpy.float64)
+
+    @staticmethod
+    def dot(a, b):
+        return float(numpy.dot(a, b))
+
+    @staticmethod
+    def sub(a, b):
+        return a - b
+
+    @staticmethod
+    def axpy(s, x, y):
+        return s * x + y
+
+
+def _backend():
+    return _Numpy if (HAS_NUMPY and not FORCE_PURE) else _Pure
+
+
+def tolist(x):
+    # type: (object) -> list
+    """백엔드에 무관하게 파이썬 리스트로 되돌린다."""
+    return [float(v) for v in x]
+
+
+class Sparse(object):
+    """대칭 희소행렬. 요소 조립처럼 같은 자리에 여러 번 더한다."""
+
+    def __init__(self, n):
+        # type: (int) -> None
+        self.n = n
+        self._d = {}
+        self._ready = False
+
+    def add(self, i, j, v):
+        # type: (int, int, float) -> None
+        if v == 0.0:
+            return
+        k = (i, j)
+        self._d[k] = self._d.get(k, 0.0) + v
+        self._ready = False
+
+    def pin(self, idx):
+        # type: (int) -> None
+        """정점 하나를 0 에 고정한다 — 라플라시안의 평행이동 자유도를 없앤다.
+
+        행과 열을 **둘 다** 지운다. 열을 남기면 다른 행이 고정된 값을 계속
+        보게 되어 대칭이 깨지고 CG 가 수렴하지 않는다.
+        """
+        for k in [k for k in self._d if k[0] == idx or k[1] == idx]:
+            del self._d[k]
+        self._d[(idx, idx)] = 1.0
+        self._ready = False
+
+    def _finalize(self):
+        items = sorted(self._d.items())
+        self._r = [ij[0] for ij, _v in items]
+        self._c = [ij[1] for ij, _v in items]
+        self._v = [v for _ij, v in items]
+        if HAS_NUMPY:
+            self._nr = numpy.array(self._r, dtype=numpy.int64)
+            self._nc = numpy.array(self._c, dtype=numpy.int64)
+            self._nv = numpy.array(self._v, dtype=numpy.float64)
+        self._ready = True
+
+    def matvec(self, x):
+        # type: (object) -> object
+        if not self._ready:
+            self._finalize()
+        if HAS_NUMPY and not FORCE_PURE:
+            xa = numpy.asarray(x, dtype=numpy.float64)
+            return numpy.bincount(self._nr, weights=self._nv * xa[self._nc],
+                                  minlength=self.n)
+        out = [0.0] * self.n
+        for i, j, v in zip(self._r, self._c, self._v):
+            out[i] += v * x[j]
+        return out
+
+
+def cg(matvec, b, x0=None, tol=1e-10, maxiter=1000):
+    # type: (object, object, object, float, int) -> tuple
+    """켤레기울기. (해, 사용한 반복 수) 를 돌려준다.
+
+    반복 수가 maxiter 와 같으면 **수렴하지 않은 것이다.** 호출자가 그걸
+    알 수 있어야 하므로 조용히 해만 돌려주지 않는다.
+    """
+    V = _backend()
+    n = len(b)
+    b = V.asvec(b)
+    x = V.zeros(n) if x0 is None else V.asvec(x0)
+    r = V.sub(b, V.asvec(matvec(x)))
+    p = V.asvec(r)
+    rs = V.dot(r, r)
+    if math.sqrt(rs) <= tol:
+        return x, 0
+    for it in range(1, maxiter + 1):
+        ap = V.asvec(matvec(p))
+        pap = V.dot(p, ap)
+        if pap <= 0.0:          # 준정부호 방어 — 고정을 빠뜨리면 여기 걸린다
+            return x, it
+        alpha = rs / pap
+        x = V.axpy(alpha, p, x)
+        r = V.axpy(-alpha, ap, r)
+        rs_new = V.dot(r, r)
+        if math.sqrt(rs_new) <= tol:
+            return x, it
+        p = V.axpy(rs_new / rs, p, r)
+        rs = rs_new
+    return x, maxiter
