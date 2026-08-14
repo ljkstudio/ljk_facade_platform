@@ -65,6 +65,26 @@ python unfold/tools/build_uf_components.py
 `gh_scripts/*.py` 를 고칠 때마다 다시 돌립니다 — **코드는 `.gh` 이진 안에 박히므로
 저장소만 고치면 캔버스는 옛 코드로 돕니다.**
 
+### 3.1b 리본에서 꺼내 쓰기
+
+두 컴포넌트는 Grasshopper 리본 **`LJKS` 탭의 `Unfold` 그룹**에 있습니다
+(AMv1 컴포넌트 7개는 같은 탭의 `AMv1` 그룹).
+
+```bash
+python unfold/tools/make_uf_user_objects.py
+```
+
+**`.ghuser` 는 스냅샷입니다** — 컴포넌트를 코드까지 통째로 복사해 담습니다.
+그래서 `gh_scripts/*.py` 를 고치면 갱신 경로가 **둘로 갈립니다**:
+
+| 무엇 | 도구 |
+|---|---|
+| 캔버스에 이미 있는 것 | `build_uf_components.py` (+ `apply_uf_param_docs.py`) |
+| 리본에서 새로 꺼낼 것 | `make_uf_user_objects.py` |
+
+한쪽만 돌리면 팔레트에서 꺼낸 컴포넌트가 옛 코드로 돕니다. 캔버스에 있던 것은
+멀쩡해서 원인을 찾기가 특히 어렵습니다.
+
 ### 3.2 `platform_path`
 
 두 컴포넌트의 첫 입력은 저장소 루트 폴더 경로입니다. 패널(Panel)에 경로를 적어 물립니다.
@@ -327,6 +347,7 @@ numpy 면 약 8,100정점, 순수 파이썬이면 약 600정점. 넘으면 계�
 |---|---|
 | `unfold/tools/build_uf_components.py` | 파라미터·힌트·코드를 캔버스에 밀어 넣는다 (멱등) |
 | `unfold/tools/apply_uf_param_docs.py` | 파라미터 툴팁을 밀어 넣는다. `--check` 로 대조만 |
+| `unfold/tools/make_uf_user_objects.py` | 리본 `LJKS > Unfold` 에 `.ghuser` 로 등록 (아이콘 포함) |
 | `unfold/tools/wire_uf_harness.py` | 시험용 입력을 물린다 — 곡면 참조·경로·슬라이더·물성 |
 | `unfold/tools/run_uf_test.py` | 한 번 돌리고 **출력값과 런타임 메시지로** 판정한다 |
 | `unfold/tools/profile_in_rhino.py` | Rhino 안에서 단계별 소요 시간을 잰다 |
