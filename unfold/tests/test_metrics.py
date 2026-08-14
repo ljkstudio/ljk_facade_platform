@@ -129,6 +129,38 @@ def test_all_flipped_is_unjudged_not_passed():
         assert "inf" not in detail
 
 
+class _SigmaResult(_FakeResult):
+    """σ 를 직접 지정하는 대역품 — 경고 문구의 자릿수를 검사하기 위한 것이다."""
+
+    def __init__(self, n, s1):
+        _FakeResult.__init__(self, n)
+        self.sigmas = [(s1, 1.0 / s1)] * n
+
+
+def test_wrinkle_warning_states_the_magnitude_not_just_the_count():
+    """**크기를 못 읽는 경고는 경고가 아니다.**
+
+    실측 2026-08-14: Rhino 로 메쉬화한 원통(가전개면)에서 요소 3120/6281 개가
+    σ>1 로 걸렸는데 문구는 "최대 σ = 1.0000" 이었다. 압축량이 0.001% 인지 7%
+    인지가 반올림에 먹혀, 무시해도 되는 잔차와 진짜 주름이 같은 문장으로 나온다.
+    한 번 이러면 이 경고는 그 뒤로 아무도 안 읽는다.
+    """
+    noise = mx.evaluate(_SigmaResult(4, 1.00001), mt.DEFAULT)
+    real = mx.evaluate(_SigmaResult(4, 1.07), mt.DEFAULT)
+    d_noise = [d for n, _s, d in noise.checks if n == "주름"][0]
+    d_real = [d for n, _s, d in real.checks if n == "주름"][0]
+    assert "0.001%" in d_noise, d_noise
+    assert "6.542%" in d_real, d_real
+
+
+def test_wrinkle_pass_message_also_states_the_margin():
+    """통과 문구도 마찬가지다 — σ 가 1 에 얼마나 가까웠는지가 남아야
+    다음 형상과 비교할 수 있다."""
+    m = mx.evaluate(_SigmaResult(4, 0.98), mt.DEFAULT)
+    detail = [d for n, _s, d in m.checks if n == "주름"][0]
+    assert "0.980000" in detail, detail
+
+
 def test_non_convergence_is_a_warning_not_silence():
     verts, faces = meshes.sphere_cap(nr=5, nt=12)
     topo = tp.build(len(verts), faces)

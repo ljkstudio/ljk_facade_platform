@@ -23,8 +23,14 @@
 #   flat    Mesh    평면 메쉬
 #   blank   Curve   재단 외곽 (여유 포함)
 #   strain  Mesh    σ 색칠 — 파랑 σ<1(성형에서 인장), 빨강 σ>1(주름 위험)
-#   warn    str*    경고·판정. **통과한 것도 적는다**
+#   warn    str     경고·판정 한 줄씩 (\n 으로 이은 문자열). **통과한 것도 적는다**
 #   info    str     요약
+#
+# **warn 이 목록이 아니라 문자열인 이유** (실측 2026-08-14): Rhino 8 의 새
+# Script 컴포넌트는 파이썬 리스트를 GH 항목으로 갈라주지 않는다. 출력
+# 파라미터를 list 접근으로 만들어도 `GH_ObjectWrapper(PyObject)` 하나로 나오고,
+# string 힌트를 걸면 리스트를 통째로 `['...', '...']` 로 문자열화한다. 그대로 두면
+# 패널에 대괄호와 따옴표가 찍혀 판정을 읽을 수가 없다. 그래서 여기서 잇는다.
 
 import os
 import sys
@@ -80,3 +86,6 @@ else:
             flat = rio.to_mesh(out.uv, out.faces)
             strain = rio.to_strain_mesh(out.uv, out.faces, out.sigmas)
             blank = rio.to_curve(out.curve)
+
+# 판정을 한 줄씩 잇는다 (위 머리말 참고). 목록으로 두면 패널이 못 읽는다.
+warn = "\n".join(warn)

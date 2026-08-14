@@ -22,8 +22,13 @@ API 가 통째로 다르다.
 `unfold/src` 가 전제한 Python 3.9 문법이 깨진다.
 
 ──────────────────────────────────────────────────────────────────────
-실측으로 알아낸 함정 셋 (2026-08-14). 순서를 지켜야 한다
+실측으로 알아낸 함정 넷 (2026-08-14). 순서를 지켜야 한다
 ──────────────────────────────────────────────────────────────────────
+0. **입력은 `Optional = True` 로 만든다.** 안 그러면 안 물린 입력마다
+   "Input parameter X failed to collect data" 경고가 나고 **컴포넌트가 통째로
+   실행되지 않는다**. 오류 표시가 없어 "돌았는데 출력이 비었다"로 보인다.
+   기본값을 코드 쪽에서 주는 설계(`float(edge_mm or 40.0)`)와 짝이다.
+
 1. **코드는 `comp.SetSource(text)` 로 넣는다.** `TryGetSource()` 는 튜플을
    돌려주므로 되읽을 때 문자열 항목을 골라야 한다.
 
@@ -80,6 +85,8 @@ SPECS = [
      [("platform_path", "string"), ("srf", "Brep"), ("props", "object"),
       ("edge_mm", "float"), ("allow_mm", "float"), ("iters", "int"),
       ("max_verts", "int"), ("run", "bool")],
+     # warn 은 문자열이다 — list 접근은 파이썬 리스트를 갈라주지 않는다
+     # (실측 2026-08-14, UFv1_Flatten.py 머리말 참고). 어댑터가 이어서 낸다.
      ["flat", "blank", "strain", "warn", "info"]),
 ]
 
@@ -97,12 +104,19 @@ def set_hint(p, name):
         return "hint 실패: %s" % traceback.format_exc().splitlines()[-1]
 
 
-def make_param(proto_type, nick):
+def make_param(proto_type, nick, optional=False, access="item"):
     p = System.Activator.CreateInstance(proto_type)
     p.Name = nick
     p.NickName = nick            # NickName 을 주면 VariableName 이 따라온다
     p.Description = nick
-    p.Access = ghk.Kernel.GH_ParamAccess.item
+    p.Access = (ghk.Kernel.GH_ParamAccess.list if access == "list"
+                else ghk.Kernel.GH_ParamAccess.item)
+    if optional:
+        # 실측 2026-08-14: Optional 을 안 세우면 안 물린 입력마다
+        # "Input parameter X failed to collect data" 경고가 나고 **컴포넌트가
+        # 아예 실행되지 않는다** (solution 0.01초, 출력 전부 없음). 예외도
+        # 오류 표시도 없어서 "돌았는데 결과가 없다"로 보인다.
+        p.Optional = True
     return p
 
 
@@ -143,13 +157,17 @@ def build(nick, path, ins, outs):
             comp.Params.UnregisterOutputParameter(p)
 
     for nickname, hint in ins:
-        p = make_param(proto_in, nickname)
+        p = make_param(proto_in, nickname, optional=True)
         comp.Params.RegisterInputParam(p)     # 등록이 먼저다 (함정 2)
-        lines.append("  in  %-16s %s" % (nickname, set_hint(p, hint)))
+        lines.append("  in  %-16s %s opt=%s" % (nickname, set_hint(p, hint), p.Optional))
 
-    for nickname in outs:
-        comp.Params.RegisterOutputParam(make_param(proto_out, nickname))
-        lines.append("  out %s" % nickname)
+    for spec in outs:
+        if isinstance(spec, tuple):
+            nickname, access = spec
+        else:
+            nickname, access = spec, "item"
+        comp.Params.RegisterOutputParam(make_param(proto_out, nickname, access=access))
+        lines.append("  out %-8s access=%s" % (nickname, access))
 
     comp.Params.OnParametersChanged()
     try:

@@ -21,7 +21,9 @@ def summarize(res, m, bl, props):
         % (res.iterations, "수렴" if res.converged else "**미수렴**",
            res.energy_history[-1]),
         "초기 배치: %s" % res.method,
-        "σ 범위 %.4f ~ %.4f   (σ>1 은 성형에서 압축 = 주름 위험)"
+        # **자릿수를 줄이지 말 것.** %.4f 로는 σ=1.000012(잔차)와 σ=1.00004 가
+        # 똑같이 "1.0000" 으로 보인다 — 무시해도 되는 값과 아닌 값이 한 문장이 된다.
+        "σ 범위 %.6f ~ %.6f   (σ>1 은 성형에서 압축 = 주름 위험)"
         % (m.sigma_min, m.sigma_max),
         "최대 성형 변형률 %s" % strain,
         "면적 3D %.1f mm² → 평면 %.1f mm² (비 %.4f)" % (m.area_3d, m.area_2d, ratio),
