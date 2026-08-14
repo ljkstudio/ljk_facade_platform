@@ -66,12 +66,13 @@ plugin/
 └── fixtures/*.json              # T1~T9
 ```
 
-### 3.1 Core 의 규약 — 세 가지를 참조하지 않는다
+### 3.1 Core 의 규약
 
-`Core` 는 **Grasshopper**, **`RhinoDoc`**, **`IGH_DataAccess`** 를 참조하지 않고 `Rhino.Geometry` 만 쓴다.
-
-- Grasshopper 미참조: 테스트가 GH 없이 돌고, 나중에 Rhino 명령·REST 서버가 같은 코어를 재사용한다 (00번 문서 §2.1).
-- **`RhinoDoc`·`IGH_DataAccess` 미참조: 이 한 줄이 나중에 계산을 워커 스레드로 내릴 수 있는지를 결정한다.** 둘 다 스레드 안전하지 않다는 것이 McNeel 이 명시한 몇 안 되는 사실이다(§3.3). 지금 파이썬 코드가 우연히 그런 상태인 것을 규약으로 고정한다.
+1. **Grasshopper 를 참조하지 않는다.** 테스트가 GH 없이 돌고, 나중에 Rhino 명령·REST 서버가 같은 코어를 재사용한다 (00번 문서 §2.1).
+2. **`RhinoDoc` 을 참조하지 않는다. `RhinoDoc.ActiveDoc` 은 특히 금지.** 헤드리스에서 null 이고, 테스트 호스트가 `CRhinoDoc_Delete` 에서 `AccessViolationException` 으로 죽는 것이 McNeel YouTrack **RH-86783**(2025-03 접수, 미해결)이다.
+3. **`IGH_DataAccess` 를 참조하지 않는다.** 공식 문서가 명시한 몇 안 되는 스레드 안전성 진술이 이것이다 — *"Independent tasks should not be directly accessing `IGH_DataAccess`, as that interface is not thread safe."*
+4. **RhinoCommon 기하 연산은 UI 스레드에서만 호출한다.** 근거는 §3.3. 나중에 누가 "`Parallel.For` 하나면 되는데"라고 할 때 이 줄이 답이 된다.
+5. **메시지를 던지지 않고 `MoldResult` 에 모아서 돌려준다** (§3.6). 이것은 대조 가능성 때문에 고른 것인데, **비동기가 요구하는 규약과 정확히 같다** — 워커 스레드에서 `AddRuntimeMessage` 를 부르는 것은 안전하지 않고 유일한 해법이 "결과 객체에 버퍼링했다가 set-data 패스에서 방출"이다. 설계가 우연히 비동기 준비를 마쳐 놓았다.
 
 ### 3.2 모듈 경계
 
@@ -91,16 +92,33 @@ plugin/
 
 > `MoldResult` 는 파이썬 `AdaptiveMoldResult`(`adaptive_mold_v1.py:48-65`)와 1:1 이 **아니다.** 후자는 `positioned_srf`·`extended_srf`·`housings`·`rods`·`tops` 를 더 들고 있다. C# 은 **중간 Brep 을 붙들지 않는다** — 이것이 이 설계의 메모리 대책이다(§3.4).
 
-### 3.3 스레딩 — 병렬화하지 않는다
+### 3.3 스레딩 — 병렬화도 비동기도 하지 않는다
 
-**결정: A~D Core 는 단일 스레드 순차 실행을 유지한다.** 이유가 둘이고, 각각 단독으로 충분하다.
+**결정: A~D Core 는 단일 스레드 순차 실행. 비동기 컴포넌트를 만들지 않는다.**
 
-1. **재현성.** `optimization.py:56, 80, 132-136` 이 순차 누산 평균 `sum(valid)/len(valid)` 을 `delta_z` 로 쓰고 그 값이 모든 핀 높이에 실린다. 누산 순서가 바뀌면 최하위 비트가 흔들리고, 그것이 `projection.py:172-176` 의 클램프 경계에 걸리면 **불리언이 뒤집힌다** — 이 설계가 "예외 없이 일치"로 못박은 항목이다.
-2. **안전성 보장이 없다.** 조사 결과(출처는 저널로): McNeel 공식 문서에 멀티스레딩 가이드가 없고, `Brep.ClosestPoint`·`Intersection.RayShoot`·`Surface.Extend`·`Plane.FitPlaneToPoints` API 문서에 스레드 언급이 **하나도 없다**. 포럼에서 Steve Baer 는 "`Rhino.Geometry` 는 병렬 가능하도록 의도했다"고 하지만 Brian Gillespie 는 "교차 코드는 스레드 안전하지 않다 — 쓰레기 결과나 크래시"라고 하고 **미해결로 끝나 있다.** David Rutten 은 "어떤 메서드도 스레드 안전을 보장하지 않는다"고 적었다. Brep 의 **공간 트리가 지연 생성**되어 동시 접근이 깨진다는 것은 Rutten 본인이 인정한 메커니즘이고(Rhino 5 에서 직렬화로 완화, 본인 표현 "대부분은 잡은 것 같다"), openNURBS 8.x 에 `mutable ON_SleepLock` 과 "많은 객체가 런타임 캐시를 지연 생성한다"는 주석이 남아 있다. 실제 출하 버그도 있다(Rhino 6 `Mesh.Split`, RH-55950).
+**근거 1 — 성능 문제가 존재하지 않는다 (실측, 2026-08-14).** 파이썬 A~D 를 Rhino 8.33 안에서 CPython 3 로 워밍업 1회 + 측정 3회:
 
-**"Rhino 가 얼지 않게"는 병렬화가 아니라 단일 워커 스레드로만 다룬다** (`GH_TaskCapableComponent`). 한 번에 한 스레드만 기하를 만지므로 위 경합이 성립하지 않는다.
+| 케이스 | 핀 | ms (3회) |
+|---|---|---|
+| T1 flat | 36 | 6.6 / 6.7 / 4.6 |
+| T3 hemisphere | 36 | 16.3 / 19.4 / 14.3 |
+| **T8 large_grid** | **121** | **24.7 / 42.9 / 48.7** |
 
-**도입 여부는 실측 뒤에 정한다.** 파이썬 T8(121핀) 실행 시간이 저널 어디에도 측정돼 있지 않다(J-001~J-013 전수 확인). M2a 에서 그 숫자를 뽑고, 체감할 만큼 느리지 않으면 **넣지 않는다** — 이득 없이 비결정성과 복잡도만 들어온다.
+완료조건에 적혀 있던 "3초"의 **60분의 1**이다. 파이썬 인터프리터와 핀별 interop 마샬링이 포함된 값이므로 C# 은 더 빨라야 한다.
+
+**근거 2 — 스레드 안전성 보장이 없고, 실패하면 프로세스가 죽는다.** McNeel 공식 문서에 멀티스레딩 가이드가 없다(관련 URL 두 개가 404). `Brep.ClosestPoint`·`Intersection.RayShoot`·`Surface.Extend`·`Plane.FitPlaneToPoints` 어느 것에도 스레드 안전성 진술이 없다. 반면 McNeel 직원(Keyu Gan)이 **`Brep.Split` 은 "스레드 안전하지 않을 수 있다"** 고 명시했고, 실패 모드가 `AccessViolationException` — **catch 되지 않고 Rhino 가 죽는다.** 그 사례는 **Release 빌드에서만** 재현됐고(Debug 검증은 아무것도 증명하지 못한다), `DuplicateBrep()` 후에도 죽은 보고가 있다.
+
+**그리고 우리 코드가 정확히 그 패턴이다** — Phase D 가 핀마다 공유 `positioned_brep` 에 `ClosestPoint` 를 치고(T3 에서 24회), Phase B 는 공유 Brep 에 `RayShoot` 를 반복한다.
+
+> **부동소수 논거는 주 근거로 쓰지 않는다.** `optimization.py:132-136` 의 누산 평균은 리덕션이라 순서가 바뀌면 클램프 경계에서 불리언이 뒤집힐 수 있지만, **그 논거는 Phase D 의 핀별 map 에는 걸리지 않는다.** 그것만 근거로 두면 "Phase D 만 병렬화하면 되잖아"에 반박당하고 결론까지 무너진다.
+
+**`GH_TaskCapableComponent` 는 이 목적에 맞는 도구가 아니다.** ⑴ `GetSolveResults` 는 *"Call this method to **await** the associated task"* 이고 `SolveInstance` 안 — 즉 **UI 스레드가 그대로 대기**한다. 얼음은 옮겨질 뿐 사라지지 않는다. ⑵ 병렬 단위가 `SolveInstance` 호출 횟수인데(Baer) 우리는 곡면 하나·**1회**다. 태스크 하나면 오버헤드만 붙는다. **반복 병렬화 장치이지 비동기 장치가 아니다.**
+
+UI 를 실제로 살리는 유일한 알려진 기법은 Speckle 의 `GH_AsyncComponent`(솔루션을 끝낸 뒤 워커 완료 시 `InvokeOnUiThread` 로 재트리거)인데, 저자 본인의 경고가 *"99% of the times this won't explode in your face. It still might though!"* 이다. **50 ms 계산에 치를 값이 아니다.**
+
+**대신 지금 하는 것:** `info` 출력에 **경과 ms** 를 싣는다. 게이트가 아니라 매 솔루션이 스스로 회귀를 보고하게 한다.
+
+**뒤집을 조건 (순서를 지킬 것):** 한 솔루션이 **500 ms 를 넘으면** → ⑴ 프로파일해서 병목이 정말 기하 호출인지 확인 → ⑵ McNeel 에 해당 메서드들의 스레드 안전성을 **직접 질의**(포럼 아카이브 추론보다 싸고 확실하다) → ⑶ 그다음에 설계. 도구는 `GH_AsyncComponent` 계열.
 
 > 이 프로젝트가 겪은 "Rhino 20분 얼음"(J-011 TRAP-01)의 원인은 **베이스 탐색**(후보 60 × 타겟 1,175, 후보당 1.7~50초)이었지 A~D 가 아니다. 얼음을 실제로 없애야 하는 곳은 그쪽이며, 이 설계의 범위 밖이다.
 
@@ -114,7 +132,13 @@ plugin/
 
 **"재사용 가능한 단위"는 `Core` 클래스 분할로 답한다** — `Grid`·`Optimization`·`Extension`·`Projection` 이 각각 public API 를 갖고 독립적으로 호출·테스트된다.
 
-**메모리는 캔버스 분할이 아니라 보유 정책으로 답한다** — `MoldResult` 는 A~D 출력만 들고 **중간 Brep(정렬·확장된 곡면)을 붙들지 않는다.** 쪼개는 것은 오히려 반대 효과다: GH 는 각 컴포넌트의 출력을 캔버스에 유지하므로 중간 Brep 이 **영구히** 남는다.
+**메모리는 애초에 쟁점이 아니다 (실측).** 중간 산출물을 `GeometryBase.ToJSON` 으로 쟀다 — T3(36핀) `positioned_srf` 3,783 B · `extended_srf` 7,751 B · `grid_pts` 864 B, T8(121핀) 각각 4,187 / 4,635 / 2,904 B. **한 솔루션의 중간 상태 전체가 약 13 KB** 다. 쪼개서 GH 가 전부 캔버스에 유지해도 인스턴스 100개에 1.5 MB. 핀이 수백 개가 돼도 늘어나는 것은 `grid_pts` 수 KB 뿐이고 곡면 크기는 핀 수와 무관하다. → **"메모리 관리를 위해 나눈다"는 동기는 기각된다.**
+
+그래도 `MoldResult` 는 **중간 Brep 을 붙들지 않는다** — 필요 없는 것을 들고 있을 이유가 없고, 파이썬 `AdaptiveMoldResult` 와 달라지는 지점이므로 명시해 둔다.
+
+> **분할이 실제로 깨뜨리는 것 — 이게 결정적이다.** `projection.calculate_heights` 가 `if extended_brep is not None and extension_method != EXTENSION_METHOD_TANGENT:` 로 분기한다. **Phase C 가 "`Surface.Extend` 였나 tangent 폴백이었나"를 Phase D 의 가지 선택에 실어 보낸다.** C·D 를 분리하면 이 문자열이 캔버스 와이어가 되고, 사용자가 다른 Brep 을 물리거나 method 를 안 물리는 순간 **완료조건 4(폴백 가지 일치)가 컴포넌트 수준에서 검증 불가능해진다.** 두 Brep + 한 문자열이 반드시 짝으로 다녀야 하는데 캔버스는 그 짝을 강제할 수 없다.
+
+**타입은 기본 GH 타입으로 충분하다** — `positioned_srf`·`extended_srf` 는 둘 다 `Brep`(`extend_surface` 가 `ToBrep()` 한다) → `Param_Brep`. 커스텀 `GH_Goo` 가 필요해지는 유일한 지점은 파라미터 묶음인데, 쪼개지 않으면 그 문제 자체가 없다.
 
 ### 3.5 컴포넌트 인터페이스
 
@@ -201,7 +225,7 @@ docs/params.ko.json          ← 정본
 |---|---|---|
 | 파라미터 툴팁 | 첫 줄은 단독 성립(무엇+단위+기본값), 함정은 아래 줄. 평문(마크다운 금지) | `params.ko.json` → C# |
 | 컴포넌트 설명 | 4단계 요약 + 단위 + 인덱싱 규약 + "플래그가 켜진 핀은 계산은 됐지만 믿을 수 없다" | C# 생성자 |
-| 우클릭 메뉴 | `예제 파일 열기` · `매뉴얼 열기` · `진단 텍스트 복사` — 전부 `Assembly.Location` 기준 | `AppendAdditionalComponentMenuItems` |
+| 우클릭 메뉴 | `예제 파일 열기` · `매뉴얼 열기` · `진단 텍스트 복사` | `AppendAdditionalComponentMenuItems`. **경로는 `Grasshopper.Instances.ComponentServer.FindAssembly(id).Location` 으로 얻는다 — `Assembly.Location` 은 금지** (COFF 메모리 로딩이 켜진 사용자에게는 빈 문자열이라, 어떤 PC 에서는 되고 어떤 PC 에서는 안 되는 재현 불가 버그가 된다) |
 | 예제 `.gh` 4개 | 아래 | 패키지 `examples/` |
 | 매뉴얼 | 정본 저장소 `docs/manual/`(md), 배포본은 패키지 안 html. **사내 위키는 링크만** — 위키는 버전이 없어 설치본과 어긋나면 없느니만 못하다 | 둘 다 |
 | 런타임 메시지 | §3.6 | 코드 |
@@ -275,7 +299,7 @@ T-1·T-6 은 툴팁으로 끝난다. **T-2·T-3·T-7 은 툴팁으로 안 된다
 
 C# 테스트는 이 빌더를 재구현해야 하는데, 어긋나면 **Core 가 옳아도 대조가 깨지고**, 우연히 상쇄되면 **틀린 채로 통과한다.**
 
-→ **M2a 의 첫 작업:** 파이썬 픽스처에 케이스별 **지오메트리 지문**(bbox·면적·제어점 수·degree)을 추가하고, C# 빌더가 그것을 먼저 통과해야 한다. **입력 동일성이 증명되기 전의 출력 대조는 전부 무의미하다.**
+→ **M2a 의 첫 작업 — `TestSurfaceBuilder`.** `dump_fixtures.build_surface`/`build_plane` 을 1:1 로 포팅한 C# 클래스를 만들고, 파이썬 픽스처에 케이스별 **지오메트리 지문**(bbox·면적·제어점 수·degree)을 추가해 빌더가 그것을 먼저 통과해야 한다. 어느 러너를 쓰든 필요하므로 추가 비용이 아니지만, **`Grid` 포팅보다 먼저 세워야 한다** — 입력 동일성이 증명되기 전의 출력 대조는 전부 무의미하다.
 
 ### 5.3 메시지도 정답지에 넣는다
 
@@ -283,11 +307,41 @@ C# 테스트는 이 빌더를 재구현해야 하는데, 어긋나면 **Core 가
 
 → 가짜 component 로 수집해 `expected.messages: [[level, text], …]` 를 픽스처에 추가한다. §3.6 의 신규 4개가 여기서 검증된다.
 
-### 5.4 러너 — 폴백을 산출물로 만든다
+### 5.4 러너 — 반나절 타임박스, 그다음 `.rhp`
 
-- **1순위 `Rhino.Testing` NuGet.** 실재하나 공개 버전이 전부 `-beta`(Rhino 8 계열 최신 `8.0.28-beta`). 셋업 요건 **미검증**.
-- **폴백은 "이미 검증된 경로"가 아니다.** 검증된 것은 *Rhino 안에서 파이썬을 태우는 것*이고(`dump_via_bridge.py`, IronPython 2.7), C# 테스트 어셈블리를 Rhino 안에서 로드·실행·회수한 선례는 이 저장소에 **없다.** 1순위와 폴백이 둘 다 미검증이면 폴백이 아니다.
-- → **M2a 산출물로 in-Rhino 러너를 만든다** — `AdaptiveMold.Core.dll` 을 참조해 픽스처를 돌리고 JSON 을 뱉는 최소 `.rhp` 명령(또는 `.gha` 안의 숨은 컴포넌트). `Rhino.Testing` 이 되면 그때 갈아탄다.
+**1순위 `Rhino.Testing`** (McNeel, MIT, `github.com/mcneel/Rhino.Testing`). 확인된 요건:
+
+| 항목 | 사실 |
+|---|---|
+| 버전 | **38개 전부 `-beta`.** 안정 릴리스 없음. Rhino 8 계열은 `8.0.28-beta`(2025-05-12) 이후 **동결** |
+| Rhino 설치 | **필수** (Rhino 8+) |
+| 라이선스 | **필수** — 실체가 Rhino.Inside + NUnit 접착제라 헤드리스여도 같은 라이선스 코드를 탄다 |
+| 프레임워크 | **NUnit 전용** (`[RhinoTestFixture]`, NUnit ≥3.14). xUnit·MSTest 없음 |
+| 설정 | `{AssemblyName}.Configs.xml` — 우리는 `LoadGrasshopper=false`, `CreateRhinoView=false` 로 충분 |
+| 플랫폼 | Windows **x64 전용** |
+
+**기대되는 실패를 미리 적어 둔다:** McNeel 공식 템플릿(`CSRhinoTest`) 자체가 `Rhino.Testing 8.0.23-beta` + `net7.0-windows` + `Microsoft.NET.Test.Sdk 17.13.0` 을 물리는데 이것이 **보고된 깨진 조합**이다(*"Microsoft.NET.Test.Sdk doesn't support net7.0-windows"*, 미해결). **우리 타겟이 `net7.0-windows` 확정이므로 정면으로 부딪힌다.** 또 `RhinoDoc.ActiveDoc` 접근은 테스트 호스트를 죽인다(RH-86783, 미해결) — §3.1 규약 2가 그것을 막는다.
+
+→ **반나절 타임박스.** 안 서면 즉시 폴백.
+
+**폴백 `.rhp` + NUnitLite — 선례가 있다.** (앞서 "선례 없음"으로 적었던 것은 틀렸다.) `JoinCAD/RhinoNUnitTestRunner`(약 150줄), `MingboPeng/RhinoUnitTest`, `structurecraft/nunittestrunner` 가 있고 McNeel 자신도 미공개 `RhinoNUnit` 명령을 갖고 있다(Rhino 8 `PluginManager` 에서 "NUnit" 검색으로 30초에 확인 — **미검증**). 핵심은 세 줄이다:
+
+```csharp
+var assembly = typeof(AdaptiveMold.Tests.FixtureTests).Assembly;
+new AutoRun(assembly).Execute(new string[]{ }, new RhinoConsoleTextWriter(), null);
+```
+
+NUnitLite `AutoRun` 은 **같은 AppDomain 에서 돈다** — `Rhino.Testing` 문제의 상당수가 테스트 탐색기가 만드는 자식 AppDomain 에서 오므로 이 경로가 원인을 구조적으로 회피한다. 그리고 `Rhino.Testing` 은 Rhino 안에서 도는 것을 이미 감지·지원하므로(`s_inRhino`) **테스트 어셈블리 하나가 두 호스트를 모두 섬긴다 — 폴백으로 가도 테스트 코드를 버리지 않는다.**
+
+| 산출물 | 내용 |
+|---|---|
+| 프로젝트 | `AdaptiveMold.TestHost`(`.rhp`, `net7.0-windows`) — **`.gha` 와 다른 출력 폴더에 둔다.** 같은 폴더면 `yak spec` 이 `.rhp` 를 검사해 배포 태그와 `secret`(플러그인 GUID)이 엉킨다 |
+| 명령 | `AmV1RunFixtures` — 인자: 픽스처 폴더, 출력 JSON 경로 |
+| 기동 | `mcpstart` 후 브리지로 `RhinoApp.RunScript("_AmV1RunFixtures …")`. **`Rhino.exe /runscript=` 로 밖에서 태우는 것은 여전히 안 된다**(J-005 TRAP-01) |
+
+**Core 를 RhinoCommon 없이 테스트하는 길은 없다.** 알고리즘 본체가 `RayShoot`·`ClosestPoint`·`Surface.Extend`·`FitPlaneToPoints` — 전부 네이티브 openNURBS 호출이다. 순수 관리 코드로 남는 것은 `Grid` 산술과 `_clamp_height` 뿐이고, 그것만 갈라내려 구조를 흔들 값이 없다.
+
+**CI 에 올리지 않는다.** GitHub-hosted `windows-latest` 는 Windows Server 라 Rhino.Inside 가 `RHINO_TOKEN` 을 요구하는데, 그 토큰은 코어시간 과금이고 McNeel 이 **상용 라이선스와 비호환**이라고 명시했다. 더 나쁜 것은 **실패가 조용하다는 것** — 실제 초록 런에서 Rhino 미설치로 `[RhinoTestFixture]` 들이 discovery 단계에서 사라졌는데 로그는 `Total tests: 21, Passed: 21` 이었다. 언젠가 올린다면 **기대 테스트 개수 단언이 필수**다. 우리는 사내 저장소이고 대조는 사람이 돌리는 게이트이므로 CI 가 필요 없다.
 
 ### 5.5 단계별로 픽스처가 덮는 것
 
@@ -333,14 +387,28 @@ Core 모듈마다 **픽스처에서 뽑은 케이스로 실패하는 테스트�
 
 | 항목 | 값 |
 |---|---|
-| id | `ljks-adaptive-mold` |
-| 배포 태그 | 어셈블리에서 유도(`rh8_0-win` 예상, **M2a-0 에서 실제 산출 파일명으로 확정**) |
-| 내용물 | `AdaptiveMold.GH.gha` · `AdaptiveMold.Core.dll` · `examples/*.gh` 4개 · `docs/manual.html` · 아이콘 |
+| id | `ljks-adaptive-mold` (글자·숫자·하이픈·언더스코어만. **최초 업로드의 대소문자가 영구 고정**) |
+| 배포 태그 | `rh<major>_<minor>-<platform>` — **참조한 `Grasshopper.dll`/`RhinoCommon.dll` 버전에서 유도된다.** `--platform` 만 재정의 가능하고 Rhino 버전 반쪽은 불가(McNeel 미구현 티켓 RH-80951). 공식 우회는 **파일명 개명**. M2a-0 에서 실제 산출 파일명 확인 |
+| 매니페스트 필수 | `name` · `version` · `authors` · `description`. 권장 `url` · `keywords`(**검색 대상**) · `icon`(PNG/JPEG 64×64). `icon_url` 은 폐기됨 |
+| 내용물 | `AdaptiveMold.GH.gha` · `AdaptiveMold.Core.dll` · `examples/*.gh` · `docs/manual.html` · 아이콘 — **`.gha`·`manifest.yml` 은 최상위 필수**, 나머지 하위 폴더는 보존된다 |
 | 타겟 | `net7.0-windows` (지시서 §3.1) |
 
-버전은 **어셈블리 버전 하나를 정본**으로 삼고 매니페스트가 따라간다.
+버전은 **어셈블리 버전 하나를 정본**으로 삼고 매니페스트가 `$version` 치환으로 따라간다.
 
-**사용자는 설치 폴더를 못 찾는다** → 예제·매뉴얼은 우클릭 메뉴에서 `Assembly.Location` 기준으로 여는 것이 유일한 실용 경로다.
+**빌드 설정:** `<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>` 를 넣는다. 없으면 NuGet DLL 이 출력에 복사되지 않아 **의존성 빠진 `.gha` 가 패키징된다.** `Core.dll` 은 프로젝트 참조라 지금은 복사되지만 NuGet 의존성이 하나라도 늘면 즉시 걸린다. (Rhino 8 은 플러그인별 `AssemblyLoadContext` 격리를 하지 않으므로 — RH-80178 미해결 — **흔한 이름의 서드파티 DLL 을 끌어들이지 않는다.**)
+
+**설치 경로 (실측):** `%APPDATA%\McNeel\Rhinoceros\packages\8.0\<PackageName>\<version>\`
+
+**운영 함정 셋:**
+1. **`yak cache` 는 자동 갱신되지 않는다.** 인덱스가 있으면 그것이 정본이므로 **낡은 인덱스가 새 패키지를 감춘다.** 배포 폴더에 `.yak` 을 올릴 때마다 `yak cache` 재실행을 **배포 스크립트에 넣는다.**
+2. **구버전 폴더가 남는다 (실측: 이 PC 의 `OpenNest` 에 2.93 과 2.94 공존).** McNeel 이 Rhino 8 자동업데이트의 의도치 않은 결과로 인정했고(RH-85306, 8 SR23 수정), 증상은 **DLL 이 무작위로 옛 버전에 바인딩되는 것**이다. → **완료조건 6의 설치·제거·재설치 검증은 UI 가 아니라 디스크에서 한다.**
+3. **자동 업데이트가 기본 켜짐이라 다운그레이드를 되돌린다.** 끄기: `Rhino.Options.PackageManager.CheckForUpdates` = false.
+
+**예제·매뉴얼은 패키지에 넣을 수 있지만 Rhino 는 아무것도 렌더링하지 않는다** — 패키지 매니저는 매니페스트 메타데이터만 보여준다. 사용자는 설치 폴더를 못 찾으므로 **우클릭 메뉴가 유일한 실용 경로**이고, 경로는 `ComponentServer.FindAssembly(id).Location` 으로 얻는다(§4.2).
+
+> **부수 이점 — Mark-of-the-Web.** 패키지 매니저는 프로그램적으로 압축을 풀어 설치본에 `Zone.Identifier` 가 붙지 않는다(실측: 이 PC 의 yak 설치 `.gha` 전부 없음). 반면 사용자가 `.zip` 을 브라우저로 받아 손으로 풀면 차단이 상속된다. **채택안이 이 문제를 자동으로 피한다** — 수동 배포로 되돌리자는 제안이 나오면 이 줄이 근거다.
+
+> **M2a-0 에서 확인할 것:** 로컬 폴더 소스로 설치하면 **매니페스트 필드가 UI 에 비어 보인다는 보고**가 있다(McNeel 미응답, **미검증**). "패키지가 뜬다"만 보지 말고 필드가 채워지는지도 본다. 비어도 설치는 되므로 **실패 판정하지 말고 기록만** 한다.
 
 ---
 
@@ -349,7 +417,7 @@ Core 모듈마다 **픽스처에서 뽑은 케이스로 실패하는 테스트�
 | | 내용 | 끝났다고 말할 수 있는 조건 |
 |---|---|---|
 | **M2a-0** | 스크래치 `.gha`(M0 산출물) + 빈 매니페스트로 **사내 폴더 소스 인식만** 스모크. 저장소 무변경. 배포 태그 실제 파일명 확인 | 로컬 폴더를 소스로 등록하니 패키지 매니저에 뜨고 설치된다 |
-| **M2a** | `plugin/` 솔루션 골격 + 빈 컴포넌트(툴팁 1·우클릭 1·예제 1) + **in-Rhino 러너** + 픽스처 지문 + **파이썬 T8 실측** | 컴포넌트가 뜨고 툴팁이 보이고 러너가 픽스처 하나를 통과한다. T8 파이썬 시간이 숫자로 나온다. **F1 도움말이 서드파티 컴포넌트에서 무엇을 보여주는지 확정**(현재 미확인) |
+| **M2a** | `plugin/` 솔루션 골격 + 빈 컴포넌트(툴팁 1·우클릭 1) + **`TestSurfaceBuilder` + 픽스처 지문** + 러너 확정(반나절 타임박스 → `.rhp` 폴백) | 컴포넌트가 뜨고 툴팁이 보이고, **C# 이 만든 지오메트리가 파이썬 지문과 일치**하며, 러너가 픽스처 하나를 끝까지 돌린다. **F1 도움말이 서드파티 컴포넌트에서 무엇을 보여주는지 확정**(현재 미확인) |
 | **M2b** | 파이썬 선반영(신규 메시지 4 · `optBranch`/`extBranch` · T9) → 픽스처 재생성 → **`expected` 6배열 불변 확인** → Core 포팅 A→D→B→C | 각 모듈이 파이썬과 같은 값을 낸다 |
 | **M3** | 어댑터 배선 + T1~T9 대조 + 툴팁·메시지·예제 4개·매뉴얼 + 자동검사 5개 | §8 완료조건 |
 | **M4** *(다음 슬라이스)* | `AMv1 Inspect` 의 A~D 호출을 `.gha` 로 교체 → **`platform_path` 제거**. 역산/표시 경계 확정 | 이 문서 밖 |
@@ -368,8 +436,8 @@ Core 모듈마다 **픽스처에서 뽑은 케이스로 실패하는 테스트�
 2. Visual Studio 에서 중단점이 걸린다
 3. 골든 픽스처 T1~T9 를 허용오차 안에서 재현하고, **플래그는 정확히 일치**한다
 4. **폴백 가지 선택이 파이썬과 핀별로 일치**한다 — *커버된 가지에 한해* (§5.1)
-5. T8(121핀)이 **파이썬 실측 대비 ≤2배 그리고 절대 3초 이내**
-6. **저장소를 체크아웃하지 않은 계정/PC**(최소한 빌드 폴더 삭제 + `RHINO_PACKAGE_DIRS` 해제 상태)에서 사내 소스로 설치·제거·재설치가 된다
+5. **T8 중앙값 ≤ 500 ms** — 워밍업 1회 + 측정 5회 이상, **중앙값**(평균·최솟값 아님). 그리고 `info` 가 경과 ms 를 보고한다
+6. **저장소를 체크아웃하지 않은 계정/PC**(최소한 빌드 폴더 삭제 + `RHINO_PACKAGE_DIRS` 해제 상태)에서 사내 소스로 설치·제거·재설치가 된다. **검증은 UI 가 아니라 `%APPDATA%\McNeel\Rhinoceros\packages\8.0\ljks-adaptive-mold\` 디스크에서** — 구버전 폴더가 남는 인정된 회귀가 있다(§6.4)
 7. 도움말 자동검사 5개 통과
 8. **처음 보는 사람이 예제를 열어 자기 곡면으로 바꾸고, 클램핑이 났을 때 그 사실을 화면에서 알아챈다.** 이진 판정이 아니므로 **한 사람에게 시켜 보고 어디서 멈췄는지를 저널에 적는 것**으로 대신한다
 
@@ -398,7 +466,7 @@ Core 모듈마다 **픽스처에서 뽑은 케이스로 실패하는 테스트�
 | §5 M1 한계표 | 폴백 가지 **5/7 → 3/7**. 미커버는 `ray-/panel`·`ray-/ext`·`closest`·`default` |
 | §6 파일 목록 | `MoldSolver.cs` 추가 (근거는 §3.2) |
 | §7 리스크 4 | GUID 충돌은 성립하지 않음 — 실제 위험은 사람의 혼동 |
-| §8-5 | 성능 기준을 절대값 → 파이썬 실측 대비 상대값 + 절대 상한 |
+| §8-5 | 성능 기준 "3초 이내" → **T8 중앙값 ≤ 500 ms**. 파이썬 실측이 25~49 ms 이므로 3초는 60배 회귀도 통과시킨다. **"파이썬 대비 ≤2배"도 쓰지 않는다** — 측정 잡음 자체가 2배(24.7↔48.7)이고, 분모에 파이썬 인터프리터·interop 이 섞여 있어 C# 이 정상이면 더 빨라야 하므로 천장이 무의미하다. 파이썬 실측표는 저널에 참고로만 남긴다 |
 | 컴포넌트 이름 | `AdaptiveMold Pins` → `AMv1 Pins` |
 
 ---
