@@ -211,6 +211,12 @@ def main():
         return 1
     text = io.open(LOG, encoding="utf-8").read()
     print(text)
+    # **이 안내를 지우지 말 것.** 파라미터를 다시 만들면 설명이 기본값으로
+    # 돌아간다 — 실측 2026-08-14: 이 도구를 한 번 돌리자 23개 중 21개가 비었다.
+    # 캔버스는 정상으로 보이고 계산도 맞아서, 잃은 것은 마우스를 올렸을 때만
+    # 보인다. 그래서 도구가 스스로 다음 절차를 말한다.
+    print("\n다음: python unfold/tools/apply_uf_param_docs.py"
+          "   ← 방금 파라미터를 다시 만들었으므로 툴팁이 지워졌다")
     return 1 if ("NOT FOUND" in text or "실패" in text) else 0
 
 

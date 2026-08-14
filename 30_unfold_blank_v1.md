@@ -316,7 +316,7 @@ numpy 면 약 8,100정점, 순수 파이썬이면 약 600정점. 넘으면 계�
 | 계산이 수십 초 걸린다 | numpy 를 못 쓰고 있다 | `info` 에 "numpy 없음"이 있는지 확인. 스크립트 첫 줄 `# r: numpy` |
 | 원통·평면인데 주름 경고가 뜬다 | 수치 잔차 (σ 가 1을 1e-5 수준으로 넘음) | 문구의 **최대 압축 %** 를 본다. 0.01% 미만이면 무시 |
 | "미수렴" 이 뜬다 | 반복 상한에서 멈췄다 | `iters` 를 올린다. 에너지가 이미 바닥이면 결과는 쓸 만하다 |
-| 파라미터 툴팁이 사라졌다 | **`.gh` 는 파라미터 설명을 보관하지 못한다** (Rhino 재시작마다) | 설명 정본을 저장소에 두고 문서를 열 때마다 다시 적용한다 |
+| 파라미터 툴팁이 비어 있다 | **`.gh` 가 설명을 보관하지 못한다**(Rhino 재시작마다), 또는 방금 코드를 push 했다 | `python unfold/tools/apply_uf_param_docs.py` (§11) |
 | `props` 를 물렸는데 기본 물성으로 돈다 | 물성 검증에 걸려 `props` 가 `None` 이 됐다 | `UFv1 Material` 의 `info` 에서 `[경고]` 줄을 읽는다 |
 
 ---
@@ -326,6 +326,7 @@ numpy 면 약 8,100정점, 순수 파이썬이면 약 600정점. 넘으면 계�
 | 도구 | 하는 일 |
 |---|---|
 | `unfold/tools/build_uf_components.py` | 파라미터·힌트·코드를 캔버스에 밀어 넣는다 (멱등) |
+| `unfold/tools/apply_uf_param_docs.py` | 파라미터 툴팁을 밀어 넣는다. `--check` 로 대조만 |
 | `unfold/tools/wire_uf_harness.py` | 시험용 입력을 물린다 — 곡면 참조·경로·슬라이더·물성 |
 | `unfold/tools/run_uf_test.py` | 한 번 돌리고 **출력값과 런타임 메시지로** 판정한다 |
 | `unfold/tools/profile_in_rhino.py` | Rhino 안에서 단계별 소요 시간을 잰다 |
@@ -334,6 +335,31 @@ numpy 면 약 8,100정점, 순수 파이썬이면 약 600정점. 넘으면 계�
 ```bash
 python -m pytest unfold/tests -q      # 116 passed — Rhino 없이 돈다
 ```
+
+### 툴팁은 두 번 사라진다
+
+파라미터 설명의 정본은 `unfold/gh_scripts/param_docs.py` 입니다(설명 23개).
+캔버스에서 직접 적지 않습니다 — `.gh` 이진 안에만 남아 git diff 가 안 되고,
+게다가 **`.gh` 는 그걸 제대로 보관하지도 못합니다.**
+
+| 언제 사라지는가 | 대응 |
+|---|---|
+| Rhino 를 다시 켤 때마다 | 문서를 열면 한 번 돌린다 — 편의 도구가 아니라 정상 절차다 |
+| 코드를 push 할 때마다 | 빌더가 파라미터를 다시 만들면서 설명이 기본값으로 돌아간다 (실측: 23개 중 21개) |
+
+```bash
+python unfold/tools/build_uf_components.py     # 코드·파라미터
+python unfold/tools/apply_uf_param_docs.py     # ← 반드시 이어서. 빌더가 이 줄을 출력한다
+python unfold/tools/apply_uf_param_docs.py --check   # 0 차이가 정상 상태
+```
+
+**이 손실이 위험한 이유는 아무 흔적이 없기 때문입니다.** 코드 push 는 성공으로
+보고되고, 캔버스도 정상이고, 계산 결과도 맞습니다. 잃은 것은 마우스를 올렸을 때만
+보이므로 며칠 뒤에 발견됩니다. 그래서 `--check` 로 상시 대조합니다.
+
+설명은 `Description` 과 `ToolTip` **두 속성 모두**에 넣습니다. 새 Script 컴포넌트의
+파라미터에는 구형에 없던 `ToolTip` 이 따로 있고, 화면이 어느 쪽을 그리는지는
+저장소 쪽에서 단정할 수 없기 때문입니다.
 
 **캔버스 모양은 근거가 아닙니다.** 판정은 `RuntimeMessages` 와 출력값으로 합니다.
 자세한 절차와 함정은 `gh-component-dev` / `rhino-bridge` 스킬, 그리고 `docs/journal/` 에 있습니다.
