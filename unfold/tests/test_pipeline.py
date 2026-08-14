@@ -8,6 +8,7 @@
 import material as mt
 import meshes
 import pipeline as pl
+import solver as sv
 
 
 def test_plane_runs_end_to_end():
@@ -42,6 +43,45 @@ def test_vertex_cap_refuses_instead_of_freezing_rhino():
     assert not out.ok
     joined = " ".join(out.warn)
     assert "10" in joined and ("요소 크기" in joined or "정점" in joined)
+
+
+def test_vertex_cap_says_how_long_it_would_take():
+    """**"상한을 넘었다"만으로는 얼마나 줄여야 하는지 알 수 없다.**
+
+    사용자가 겪는 것은 "정점 5889개"가 아니라 "Rhino 가 멈춰 있는 6초"다.
+    예상 시간을 말해야 요소 크기를 얼마나 키울지 판단할 수 있다.
+    """
+    verts, faces = meshes.sphere_cap(nr=8, nt=24)
+    out = pl.run(verts, faces, max_verts=10)
+    joined = " ".join(out.warn)
+    assert "초" in joined, joined
+    assert "멈춰" in joined or "얼어" in joined, joined
+
+
+def test_default_vertex_cap_follows_the_backend():
+    """**같은 상한을 두 백엔드에 쓰면 한쪽은 과보호, 다른 쪽은 무방비가 된다.**
+
+    실측 2026-08-14 (돔, Rhino 8 py39): numpy 로 2049정점 0.50 s / 5889정점
+    1.44 s / 16385정점 6.14 s. numpy 없이는 2049정점이 10.28 s — 20배다.
+    """
+    before = sv.FORCE_PURE
+    try:
+        sv.FORCE_PURE = False
+        fast = pl.default_max_verts()
+        sv.FORCE_PURE = True
+        slow = pl.default_max_verts()
+    finally:
+        sv.FORCE_PURE = before
+    if sv.HAS_NUMPY:
+        assert fast > slow * 5, "numpy=%d pure=%d" % (fast, slow)
+    assert slow > 0
+
+
+def test_explicit_max_verts_still_wins():
+    """자동 상한이 사용자의 명시값을 덮으면 안 된다."""
+    verts, faces = meshes.plane_grid()
+    assert pl.run(verts, faces, max_verts=len(verts)).ok
+    assert not pl.run(verts, faces, max_verts=len(verts) - 1).ok
 
 
 def test_bad_material_is_reported_not_swallowed():

@@ -8,9 +8,13 @@
 `panel_cylinder` / `panel_dome` / `panel_saddle`). 기본은 `panel_flat` —
 σ=1 이 나와야 하는 가장 강한 정상성 검사다.
 
-`edge=` `allow=` `iters=` `maxverts=` 는 슬라이더 값이다. 주지 않으면 컴포넌트
-기본값과 같은 값(40 / 15 / 30 / 5000)으로 맞춘다 — **매번 명시적으로 맞춘다.**
-남아 있던 값으로 돌면 어제의 슬라이더가 오늘의 결과를 설명하게 된다.
+`edge=` `allow=` `iters=` 는 슬라이더 값이다. 주지 않으면 컴포넌트 기본값과 같은
+값(40 / 15 / 30)으로 맞춘다 — **매번 명시적으로 맞춘다.** 남아 있던 값으로 돌면
+어제의 슬라이더가 오늘의 결과를 설명하게 된다.
+
+`maxverts=` 와 물성(`name= thick= elong= source= penalty=`)은 **줬을 때만** 물린다.
+슬라이더는 "값 없음"을 표현하지 못하는데, 그 둘은 값 없음이 뜻을 가진다 —
+max_verts 는 환경 속도로 자동 계산, elong_max 는 찢어짐 미판정이다.
 
 멱등하다. 이미 물려 있으면 참조 대상만 바꾼다.
 
@@ -31,8 +35,8 @@ from rhino_bridge import Bridge, remote  # noqa: E402
 BODY = u'''
 import System.Drawing as sd
 
-REPO = REPOPATH
-TARGET = TARGETNAME
+REPO = @REPOPATH@
+TARGET = @TARGETNAME@
 
 doc = None
 comps = {}
@@ -109,11 +113,14 @@ else:
 
     # ── 수치 슬라이더 (없으면 만들고, 값은 항상 인자대로 맞춘다)
     SLIDERS = [
-        ("uf_edge",      "edge_mm",   "10<EDGE<200",     1, -260.0, 1280.0),
-        ("uf_allow",     "allow_mm",  "0<ALLOW<100",     1, -260.0, 1340.0),
-        ("uf_iters",     "iters",     "5<ITERS<300",     0, -260.0, 1400.0),
-        ("uf_maxverts",  "max_verts", "500<MAXV<40000",  0, -260.0, 1460.0),
+        ("uf_edge",      "edge_mm",   "10<@EDGE@<200",     1, -260.0, 1280.0),
+        ("uf_allow",     "allow_mm",  "0<@ALLOW@<100",     1, -260.0, 1340.0),
+        ("uf_iters",     "iters",     "5<@ITERS@<300",     0, -260.0, 1400.0),
     ]
+    # max_verts 는 **줬을 때만** 물린다. 안 물리면 pipeline 이 이 환경의 속도로
+    # 상한을 계산한다 — 슬라이더를 항상 물리면 그 자동 판단이 늘 덮인다.
+    if @MAXVFLAG@:
+        SLIDERS.append(("uf_maxverts", "max_verts", "500<@MAXV@<40000", 0, -260.0, 1460.0))
     made = {}
     for nick, target_in, init, digits, x, y in SLIDERS:
         sl = have.get(nick)
@@ -130,8 +137,8 @@ else:
     # **인자를 준 때만 물린다.** 슬라이더는 "값 없음"을 표현하지 못한다 —
     # elong_max 를 0 으로 물리면 MaterialProps 가 "0 초과여야 한다"로 거부하고
     # props 가 통째로 None 이 되어, 미판정(값 없음)과 입력 오류가 뒤섞인다.
-    MAT_TEXT = [] if not MATFLAG else [("uf_matname", "name", MATNAME, 200.0, 980.0),
-                ("uf_source", "source", MATSOURCE, 200.0, 1060.0)]
+    MAT_TEXT = [] if not @MATFLAG@ else [("uf_matname", "name", @MATNAME@, 200.0, 980.0),
+                ("uf_source", "source", @MATSOURCE@, 200.0, 1060.0)]
     mat_in = {}
     for nick, target_in, text, x, y in MAT_TEXT:
         pn = have.get(nick)
@@ -142,10 +149,10 @@ else:
         pn.ExpireSolution(True)
         mat_in[target_in] = pn
 
-    MAT_NUM = [] if not MATFLAG else [
-               ("uf_thick", "thickness", "0.5<THICK<10", 1, 200.0, 1140.0),
-               ("uf_elong", "elong_max", "0<ELONG<0.5", 3, 200.0, 1200.0),
-               ("uf_penalty", "wrinkle_penalty", "1<PENALTY<10", 1, 200.0, 1260.0)]
+    MAT_NUM = [] if not @MATFLAG@ else [
+               ("uf_thick", "thickness", "0.5<@THICK@<10", 1, 200.0, 1140.0),
+               ("uf_elong", "elong_max", "0<@ELONG@<0.5", 3, 200.0, 1200.0),
+               ("uf_penalty", "wrinkle_penalty", "1<@PENALTY@<10", 1, 200.0, 1260.0)]
     for nick, target_in, init, digits, x, y in MAT_NUM:
         sl = have.get(nick)
         if sl is None:
@@ -172,6 +179,14 @@ else:
         lines.append(wire(fl, "run", tog))
         for target_in, sl in made.items():
             lines.append(wire(fl, target_in, sl))
+        if not @MAXVFLAG@:
+            # 지난번 실행이 물려 둔 것을 풀어 준다 — 남아 있으면 자동 상한이
+            # 안 쓰인 채로 "자동인 줄 알았는데 아니었다"가 된다
+            for p in fl.Params.Input:
+                if p.NickName == "max_verts" and p.SourceCount:
+                    for s in [q for q in p.Sources]:
+                        p.RemoveSource(s)
+                    lines.append("max_verts 배선을 풀었다 (자동 상한 사용)")
     if mt is not None:
         lines.append(wire(mt, "platform_path", pan))
         for target_in, src in mat_in.items():
@@ -193,13 +208,16 @@ else:
 '''
 
 
-DEFAULTS = {"EDGE": "40", "ALLOW": "15", "ITERS": "30", "MAXV": "5000",
-            "THICK": "3", "ELONG": "0.12", "PENALTY": "1",
-            "MATNAME": "''", "MATSOURCE": "''", "MATFLAG": "False"}
-KEYS = {"edge": "EDGE", "allow": "ALLOW", "iters": "ITERS", "maxverts": "MAXV",
-        "thick": "THICK", "elong": "ELONG", "penalty": "PENALTY",
-        "name": "MATNAME", "source": "MATSOURCE"}
-QUOTED = ("MATNAME", "MATSOURCE")      # 파이썬 문자열로 들어가야 한다
+# 치환 토큰은 **`@…@` 로 감싼다.** 안 그러면 `MAXV` 가 `MAXVFLAG` 안에서 먼저
+# 치환돼 `5000FLAG` 같은 것이 만들어지고, 원격 코드가 구문 오류로 죽는다 (실측).
+DEFAULTS = {"@EDGE@": "40", "@ALLOW@": "15", "@ITERS@": "30", "@MAXV@": "5000",
+            "@THICK@": "3", "@ELONG@": "0.12", "@PENALTY@": "1",
+            "@MATNAME@": "''", "@MATSOURCE@": "''", "@MATFLAG@": "False",
+            "@MAXVFLAG@": "False"}
+KEYS = {"edge": "@EDGE@", "allow": "@ALLOW@", "iters": "@ITERS@", "maxverts": "@MAXV@",
+        "thick": "@THICK@", "elong": "@ELONG@", "penalty": "@PENALTY@",
+        "name": "@MATNAME@", "source": "@MATSOURCE@"}
+QUOTED = ("@MATNAME@", "@MATSOURCE@")      # 파이썬 문자열로 들어가야 한다
 
 
 def main():
@@ -214,12 +232,14 @@ def main():
                 print("모르는 인자: %s (%s)" % (a, " ".join(sorted(KEYS))))
                 return 2
             vals[key] = repr(v) if key in QUOTED else v
-            if key in ("THICK", "ELONG", "PENALTY", "MATNAME", "MATSOURCE"):
-                vals["MATFLAG"] = "True"
+            if key in ("@THICK@", "@ELONG@", "@PENALTY@", "@MATNAME@", "@MATSOURCE@"):
+                vals["@MATFLAG@"] = "True"
+            if key == "@MAXV@":
+                vals["@MAXVFLAG@"] = "True"
         else:
             target = a
     # 본문 안에 %s 서식이 많아 % 치환은 못 쓴다 — 빌더와 같은 방식으로 바꾼다
-    body = BODY.replace("REPOPATH", repr(REPO)).replace("TARGETNAME", repr(target))
+    body = BODY.replace("@REPOPATH@", repr(REPO)).replace("@TARGETNAME@", repr(target))
     for k, v in vals.items():
         body = body.replace(k, v)
     with Bridge(timeout=180) as b:

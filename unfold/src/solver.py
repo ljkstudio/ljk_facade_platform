@@ -1,9 +1,16 @@
 # -*- coding: utf-8 -*-
 """희소 대칭 선형계를 켤레기울기로 푼다.
 
-**numpy 는 의존성이 아니라 가속기다.** Rhino 8 py39 site-packages 에 numpy 가
-없다는 것이 실측되어 있다(2026-08-14). 그래서 순수 파이썬 경로가 정본이고,
-numpy 가 있으면 같은 답을 더 빨리 낸다. 두 경로의 일치는 테스트가 지킨다.
+**numpy 는 의존성이 아니라 가속기다.** 순수 파이썬 경로가 정본이고, numpy 가
+있으면 같은 답을 더 빨리 낸다. 두 경로의 일치는 테스트가 지킨다.
+
+**"Rhino 8 py39 에 numpy 가 없다"는 앞선 실측은 반쪽이었다** [정정 2026-08-14].
+없는 게 아니라 **선언하지 않으면 안 보이는 것**이다. 스크립트 첫머리에
+`# r: numpy` 를 적으면 Rhino 가 자기 site-env 를 sys.path 에 얹는다 —
+이 PC 에서 numpy 2.0.2 가 그렇게 나왔다(`~/.rhinocode/py39-rh8/site-envs/...`).
+그 한 줄의 값이 크다: 돔 2049정점 전개가 **10.28 s → 0.50 s (20.6배)**.
+그래서 GH 어댑터(`unfold/gh_scripts/UFv1_Flatten.py`) 첫 줄에 그 선언이 있고,
+없는 환경에서도 계산은 되게 두되 info 에 "numpy 없음"이 찍히도록 했다.
 
 **왜 Cholesky 가 아니라 CG 인가.** 주름 벌점을 반복 재가중(IRLS)으로 넣기
 때문에 강성행렬이 매 반복 바뀐다 → 사전 분해를 재사용할 수 없다. CG 는 분해가
@@ -51,6 +58,11 @@ class _Pure(object):
         """s*x + y"""
         return [s * xi + yi for xi, yi in zip(x, y)]
 
+    @staticmethod
+    def mul(a, b):
+        """성분별 곱 — 야코비 전처리에 쓴다."""
+        return [x * y for x, y in zip(a, b)]
+
 
 class _Numpy(object):
     """numpy 배열 기반. 인터페이스는 _Pure 와 같다."""
@@ -75,9 +87,20 @@ class _Numpy(object):
     def axpy(s, x, y):
         return s * x + y
 
+    @staticmethod
+    def mul(a, b):
+        return a * b
+
+
+def fast_backend():
+    # type: () -> bool
+    """지금 numpy 경로로 도는가. 상한·예상 시간을 정하는 쪽이 이걸 봐야 한다 —
+    `HAS_NUMPY` 만 보면 테스트가 강제한 순수 경로를 놓친다."""
+    return HAS_NUMPY and not FORCE_PURE
+
 
 def _backend():
-    return _Numpy if (HAS_NUMPY and not FORCE_PURE) else _Pure
+    return _Numpy if fast_backend() else _Pure
 
 
 def tolist(x):
@@ -114,6 +137,11 @@ class Sparse(object):
             del self._d[k]
         self._d[(idx, idx)] = 1.0
         self._ready = False
+
+    def diagonal(self):
+        # type: () -> list
+        """대각 성분. 야코비 전처리의 재료다."""
+        return [self._d.get((i, i), 0.0) for i in range(self.n)]
 
     def copy(self):
         # type: () -> object
@@ -165,9 +193,24 @@ class Sparse(object):
         return out
 
 
-def cg(matvec, b, x0=None, tol=1e-10, maxiter=1000):
-    # type: (object, object, object, float, int) -> tuple
+def _inv_diag(V, precond, n):
+    """야코비 전처리자 M⁻¹ = diag(1/d).
+
+    **0 이하인 대각은 1 로 둔다.** 둔각 삼각형이 많으면 cotangent 가중이 음수가
+    되어 실제로 일어난다. 1/d 를 그대로 쓰면 M 이 정부호를 잃어 CG 가 발산하는데,
+    그건 전처리로 얻는 것보다 훨씬 비싼 대가다. 그 자리만 전처리를 포기한다.
+    """
+    return V.asvec([(1.0 / d if d > 0.0 else 1.0) for d in precond])
+
+
+def cg(matvec, b, x0=None, tol=1e-10, maxiter=1000, precond=None):
+    # type: (object, object, object, float, int, object) -> tuple
     """켤레기울기. (해, 사용한 반복 수) 를 돌려준다.
+
+    `precond` 는 행렬의 **대각 성분**이다 (`Sparse.diagonal()`). 주면 야코비
+    전처리를 건다 — **정확도를 팔지 않고** 반복만 줄인다. 멈춤 판정은 전처리
+    유무와 무관하게 잔차 ‖r‖ 로 하므로 두 경로의 허용치가 같은 뜻을 가진다.
+    (‖z‖ 로 판정하면 전처리를 걸 때마다 허용치의 뜻이 달라져 비교가 깨진다.)
 
     **반복 수가 maxiter 이면 이 해를 믿으면 안 된다.** 그게 유일한 실패 신호다.
 
@@ -184,10 +227,15 @@ def cg(matvec, b, x0=None, tol=1e-10, maxiter=1000):
     b = V.asvec(b)
     x = V.zeros(n) if x0 is None else V.asvec(x0)
     r = V.sub(b, V.asvec(matvec(x)))
-    p = V.asvec(r)
-    rs = V.dot(r, r)
-    if math.sqrt(rs) <= tol:
+    rr = V.dot(r, r)
+    if math.sqrt(rr) <= tol:
         return x, 0
+
+    inv = None if precond is None else _inv_diag(V, precond, n)
+    z = r if inv is None else V.mul(inv, r)
+    p = V.asvec(z)
+    rz = V.dot(r, z)                 # 전처리가 없으면 rz == rr 이다
+
     for it in range(1, maxiter + 1):
         ap = V.asvec(matvec(p))
         pap = V.dot(p, ap)
@@ -195,12 +243,14 @@ def cg(matvec, b, x0=None, tol=1e-10, maxiter=1000):
             # 준정부호 붕괴. maxiter 를 돌려줘 실패 신호를 낸다 — it 을 돌려주면
             # 정상 수렴과 구별되지 않는다.
             return x, maxiter
-        alpha = rs / pap
+        alpha = rz / pap
         x = V.axpy(alpha, p, x)
         r = V.axpy(-alpha, ap, r)
-        rs_new = V.dot(r, r)
-        if math.sqrt(rs_new) <= tol:
+        rr = V.dot(r, r)
+        if math.sqrt(rr) <= tol:     # 판정은 항상 ‖r‖ 로 한다
             return x, it
-        p = V.axpy(rs_new / rs, p, r)
-        rs = rs_new
+        z = r if inv is None else V.mul(inv, r)
+        rz_new = V.dot(r, z)
+        p = V.axpy(rz_new / rz, p, z)
+        rz = rz_new
     return x, maxiter

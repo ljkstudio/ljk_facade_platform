@@ -142,6 +142,74 @@ def test_warm_start_reduces_iterations_on_a_2d_laplacian():
     assert warm < cold, "cold=%d warm=%d" % (cold, warm)
 
 
+def graded_grid_laplacian(k):
+    """가중이 자리마다 크게 다른 격자.
+
+    **균일 격자로는 전처리 효과를 잴 수 없다** — 대각이 전부 같으면 야코비
+    전처리는 전체 배율일 뿐이라 CG 가 하나도 안 줄어든다. 실제 cotangent
+    라플라시안은 삼각형 모양과 정점 차수에 따라 대각이 자리마다 다르고,
+    그 차이가 조건수를 키운다. 그 상황을 흉내낸다.
+    """
+    n = k * k
+    sp = sv.Sparse(n)
+    for j in range(k):
+        for i in range(k):
+            a = j * k + i
+            for di, dj in ((1, 0), (0, 1)):
+                if i + di < k and j + dj < k:
+                    b = (j + dj) * k + (i + di)
+                    w = 10.0 ** (((i * 7 + j * 3) % 5) - 2)     # 0.01 ~ 100
+                    sp.add(a, a, w); sp.add(b, b, w)
+                    sp.add(a, b, -w); sp.add(b, a, -w)
+    return sp
+
+
+def test_diagonal_returns_the_assembled_diagonal():
+    sp = sv.Sparse(3)
+    sp.add(0, 0, 2.0)
+    sp.add(0, 0, 0.5)          # 조립은 누적이다
+    sp.add(1, 0, 3.0)          # 비대각은 대각에 안 들어간다
+    assert sv.tolist(sp.diagonal()) == pytest.approx([2.5, 0.0, 0.0])
+
+
+def test_jacobi_preconditioning_cuts_iterations_on_a_graded_laplacian():
+    """**전처리는 정확도를 팔지 않고 반복을 줄인다.**
+
+    허용치를 푸는 것과의 차이가 여기다 — 허용치를 풀면 답이 움직이지만,
+    전처리는 같은 허용치에서 같은 답에 더 빨리 닿는다.
+    """
+    k = 14
+    n = k * k
+    sp = graded_grid_laplacian(k)
+    sp.pin(0)
+    b = [math.sin(i * 0.9) for i in range(n)]
+    b[0] = 0.0
+    plain, it_plain = sv.cg(sp.matvec, b, tol=1e-10, maxiter=20000)
+    pre, it_pre = sv.cg(sp.matvec, b, tol=1e-10, maxiter=20000,
+                        precond=sp.diagonal())
+    assert it_pre < it_plain, "plain=%d pre=%d" % (it_plain, it_pre)
+    assert sv.tolist(pre) == pytest.approx(sv.tolist(plain), abs=1e-6)
+
+
+def test_preconditioner_survives_a_non_positive_diagonal():
+    """대각이 0 이하인 자리가 있어도 나눗셈에서 죽으면 안 된다.
+
+    둔각 삼각형이 많으면 cotangent 가중이 음수가 되어 실제로 일어난다.
+    그때는 그 자리의 전처리를 포기할 뿐, 예외를 던지거나 M 의 정부호를
+    깨서는 안 된다.
+    """
+    sp = path_laplacian(4)
+    sp.pin(0)
+    b = [0.0, 1.0, 0.0, 1.0]
+    bad = sv.tolist(sp.diagonal())
+    bad[1] = 0.0
+    bad[2] = -3.0
+    x, iters = sv.cg(sp.matvec, b, tol=1e-12, maxiter=500, precond=bad)
+    assert iters < 500
+    ref, _ = sv.cg(sp.matvec, b, tol=1e-12, maxiter=500)
+    assert sv.tolist(x) == pytest.approx(sv.tolist(ref), abs=1e-8)
+
+
 def test_cg_reports_when_it_did_not_converge():
     """조용히 틀린 답을 돌려주면 안 된다."""
     sp = path_laplacian(50)

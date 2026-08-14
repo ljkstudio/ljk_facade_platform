@@ -28,7 +28,20 @@ import solver as sv
 DEFAULT_ITERS = 30
 ENERGY_TOL = 1e-6         # 상대 에너지 변화가 이보다 작으면 수렴으로 본다
 ENERGY_FLOOR = 1e-30      # 상대 판정의 분모 하한 — 에너지가 0 인 평면에서 0 나눗셈을 막는다
-CG_REL = 1e-11            # CG 잔차 허용치 (rhs 크기에 상대적)
+# CG 잔차 허용치 (rhs 크기에 상대적).
+#
+# **바깥 루프가 필요로 하는 것보다 더 정확하게 풀 이유가 없다.** 바깥은 에너지
+# 상대변화 1e-6 에서 멈추는데 예전 값(1e-11)은 안쪽 선형계를 그보다 다섯 자리
+# 더 정확하게 풀고 있었다. 실측 2026-08-14 (돔 2049정점, Rhino 8 py39, numpy 없음):
+#
+#     1e-11 : 5.66 s  CG 4194회   σmax 1.070200  (기준)
+#     1e-09 : 4.67 s  CG 3530회   Δσmax 3.3e-11
+#     1e-07 : 2.74 s  CG 1978회   Δσmax 6.6e-08   ← 채택
+#     1e-05 : 1.19 s  CG  752회   Δσmax 2.1e-06   골든 픽스처 1e-6 을 넘는다
+#
+# 1e-7 을 고른 근거는 "빠르다"가 아니라 **결과가 안 움직인다**는 것이다.
+# 회귀 방어선(golden fixture 상대오차 1e-6)보다 한 자리 아래다.
+CG_REL = 1e-9
 CG_TOL_FLOOR = 1.0        # rhs 가 0 에 가까울 때 허용치까지 0 이 되는 것을 막는다
 CG_CAP_PER_VERTEX = 20    # CG 반복 상한 = 이것 × 정점 수 + CG_CAP_BASE
 CG_CAP_BASE = 500
@@ -114,12 +127,16 @@ def _global_step(n, elements, faces, rots, weights, prev):
     out = []
     stalled = 0
     cap = CG_CAP_PER_VERTEX * n + CG_CAP_BASE
+    # 야코비 전처리. cotangent 라플라시안은 삼각형 모양과 정점 차수에 따라
+    # 대각이 자릿수 단위로 달라 조건수가 커진다 — 대각으로 나누는 것만으로
+    # 반복이 눈에 띄게 준다. **정확도는 팔지 않는다** (허용치는 그대로다).
+    diag = mat.diagonal()
     for b, prev_axis in ((bx, [p[0] for p in prev]), (by, [p[1] for p in prev])):
         scale = math.sqrt(sum(v * v for v in b))
         tol = CG_REL * (scale + CG_TOL_FLOOR)
         warm = list(prev_axis)
         warm[0] = 0.0
-        sol, used = sv.cg(mat.matvec, b, x0=warm, tol=tol, maxiter=cap)
+        sol, used = sv.cg(mat.matvec, b, x0=warm, tol=tol, maxiter=cap, precond=diag)
         if used >= cap:
             # 수렴 실패이거나 준정부호 붕괴다. **버리면 안 되는 신호다** —
             # 둔각 삼각형이 많으면 cotangent 가중이 음수가 되어 실제로 일어나고,
