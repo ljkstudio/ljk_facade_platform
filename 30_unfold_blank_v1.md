@@ -65,6 +65,16 @@ python unfold/tools/build_uf_components.py
 `gh_scripts/*.py` 를 고칠 때마다 다시 돌립니다 — **코드는 `.gh` 이진 안에 박히므로
 저장소만 고치면 캔버스는 옛 코드로 돕니다.**
 
+두 컴포넌트는 **`unfold/grasshopper/UFv1.gh`** 에 시험 하네스(경로 패널 · 곡면 참조 ·
+슬라이더 · 물성)와 함께 들어 있습니다. AMv1 캔버스와 분리돼 있으므로 이 파일만 열면
+됩니다.
+
+```bash
+# 열기 / 저장 — 저장 후 다시 읽어 객체·연결·코드 길이를 센다
+python ~/.claude/skills/rhino-bridge/scripts/rhino_bridge.py run-file \
+    unfold/tools/save_uf_document.py
+```
+
 ### 3.1b 리본에서 꺼내 쓰기
 
 두 컴포넌트는 Grasshopper 리본 **`LJKS` 탭의 `Unfold` 그룹**에 있습니다
@@ -348,6 +358,8 @@ numpy 면 약 8,100정점, 순수 파이썬이면 약 600정점. 넘으면 계�
 | `unfold/tools/build_uf_components.py` | 파라미터·힌트·코드를 캔버스에 밀어 넣는다 (멱등) |
 | `unfold/tools/apply_uf_param_docs.py` | 파라미터 툴팁을 밀어 넣는다. `--check` 로 대조만 |
 | `unfold/tools/make_uf_user_objects.py` | 리본 `LJKS > Unfold` 에 `.ghuser` 로 등록 (아이콘 포함) |
+| `unfold/tools/save_uf_document.py` | `UFv1.gh` 열기·저장 + 다시 읽어 검증 (`run-file` 로) |
+| `unfold/tools/split_uf_document.py` | 다른 문서에 섞인 UF 덩어리를 떼어낸다 (`run-file` 로) |
 | `unfold/tools/wire_uf_harness.py` | 시험용 입력을 물린다 — 곡면 참조·경로·슬라이더·물성 |
 | `unfold/tools/run_uf_test.py` | 한 번 돌리고 **출력값과 런타임 메시지로** 판정한다 |
 | `unfold/tools/profile_in_rhino.py` | Rhino 안에서 단계별 소요 시간을 잰다 |
@@ -360,13 +372,18 @@ python -m pytest unfold/tests -q      # 116 passed — Rhino 없이 돈다
 ### 툴팁은 두 번 사라진다
 
 파라미터 설명의 정본은 `unfold/gh_scripts/param_docs.py` 입니다(설명 23개).
-캔버스에서 직접 적지 않습니다 — `.gh` 이진 안에만 남아 git diff 가 안 되고,
-게다가 **`.gh` 는 그걸 제대로 보관하지도 못합니다.**
+캔버스에서 직접 적지 않습니다 — `.gh` 이진 안에만 남아 git diff 가 안 됩니다.
 
 | 언제 사라지는가 | 대응 |
 |---|---|
-| Rhino 를 다시 켤 때마다 | 문서를 열면 한 번 돌린다 — 편의 도구가 아니라 정상 절차다 |
-| 코드를 push 할 때마다 | 빌더가 파라미터를 다시 만들면서 설명이 기본값으로 돌아간다 (실측: 23개 중 21개) |
+| **코드를 push 할 때마다** | 빌더가 파라미터를 다시 만들면서 설명이 기본값으로 돌아간다 (실측: 23개 중 21개) |
+| Rhino 를 다시 켤 때 (구형 GhPython 기준) | 문서를 열면 한 번 돌린다 |
+
+> **[정정 2026-08-14]** "`.gh` 는 설명을 보관하지 못한다"는 AMv1(구형 GhPython)
+> 기준이고 **재시작 후** 측정된 것입니다(125개 중 120개 소실). UFv1 을 별도 `.gh` 로
+> 저장했다가 다시 열었을 때는 **23개가 전부 남아 있었습니다** — 새 Script 컴포넌트는
+> 최소한 같은 세션 안에서는 파일이 설명을 들고 옵니다. **재시작까지 살아남는지는
+> 아직 미검증**이라 절차(문서를 열면 한 번 돌린다)는 그대로 둡니다.
 
 ```bash
 python unfold/tools/build_uf_components.py     # 코드·파라미터

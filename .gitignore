@@ -58,3 +58,4 @@ adaptive_mold/grasshopper/_search_base_results.jsonl
 # Rhino 검사 로그 (매 실행마다 새로 쓴다)
 unfold/tests/rhino/_*_log.txt
 unfold/tests/rhino/_profile_cfg.txt
+unfold/grasshopper/_*_log.txt
