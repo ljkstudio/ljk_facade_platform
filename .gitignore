@@ -54,3 +54,6 @@ adaptive_mold/grasshopper/_search_base_results.jsonl
 
 # SDD 작업공간 (git-ignored 스크래치)
 .superpowers/
+
+# Rhino 검사 로그 (매 실행마다 새로 쓴다)
+unfold/tests/rhino/_*_log.txt

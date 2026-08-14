@@ -668,6 +668,15 @@ def test_describe_marks_unset_judgment_fields_as_unjudged():
     """미판정을 통과로 치지 않는다."""
     text = mt.MaterialProps().describe()
     assert "미판정" in text
+
+
+def test_describe_survives_a_missing_penalty():
+    """_validate 가 None 을 예상 입력으로 다루므로 describe() 도 다뤄야 한다.
+    물성이 잘못됐을수록 진단이 더 필요한데, 여기서 죽으면 사용자는 예외만 본다."""
+    p = mt.MaterialProps(wrinkle_penalty=None)
+    assert not p.ok
+    text = p.describe()
+    assert "wrinkle_penalty" in text
 ```
 
 - [ ] **Step 2: 테스트가 실패하는지 확인한다**
@@ -741,9 +750,15 @@ class MaterialProps(object):
         # type: () -> str
         """무엇이 형상을 바꿨고 무엇이 기록일 뿐인지 말한다."""
         lines = ["재료: %s" % (self.name or "(이름 없음)")]
-        lines.append("  [형상] wrinkle_penalty = %g%s"
-                     % (self.wrinkle_penalty,
-                        "" if self.wrinkle_penalty > 1.0 else "  (1.0 — 순수 ARAP, 벌점 없음)"))
+        if self.wrinkle_penalty is None:
+            # _validate 가 None 을 예상 입력으로 다루므로 여기서도 다뤄야 한다.
+            # 물성이 잘못됐을수록 describe() 는 **더** 말을 해야 한다 — 여기서
+            # 죽으면 진단이 통째로 사라지고 사용자는 예외만 본다.
+            lines.append("  [형상] wrinkle_penalty 없음 — 잘못된 물성이다 (problems 참조)")
+        else:
+            lines.append("  [형상] wrinkle_penalty = %g%s"
+                         % (self.wrinkle_penalty,
+                            "" if self.wrinkle_penalty > 1.0 else "  (1.0 — 순수 ARAP, 벌점 없음)"))
         if self.elong_max is None:
             lines.append("  [판정] elong_max 없음 — 찢어짐 **미판정**")
         else:
@@ -890,16 +905,50 @@ def test_pure_and_numpy_paths_agree():
     assert pure == pytest.approx(fast, abs=1e-8)
 
 
-def test_warm_start_reduces_iterations():
-    """ARAP 반복 사이에 b 가 조금만 바뀐다 — 그때 warm start 가 값어치를 한다."""
+def grid_laplacian(k):
+    """(k × k) 격자의 라플라시안. 워엄 스타트가 실제로 값어치를 하는 형태다."""
+    n = k * k
+    sp = sv.Sparse(n)
+    for j in range(k):
+        for i in range(k):
+            a = j * k + i
+            for di, dj in ((1, 0), (0, 1)):
+                if i + di < k and j + dj < k:
+                    b = (j + dj) * k + (i + di)
+                    sp.add(a, a, 1.0); sp.add(b, b, 1.0)
+                    sp.add(a, b, -1.0); sp.add(b, a, -1.0)
+    return sp
+
+
+def test_warm_start_from_the_exact_solution_costs_nothing():
+    """이미 답을 알고 시작하면 반복이 0 이어야 한다 — x0 가 실제로 쓰인다는 증거."""
     n = 60
     sp = path_laplacian(n)
+    sp.pin(0)
+    b = [0.0] * n; b[n - 1] = 1.0
+    x, _cold = sv.cg(sp.matvec, b, tol=1e-12, maxiter=5000)
+    _again, iters = sv.cg(sp.matvec, b, x0=x, tol=1e-12, maxiter=5000)
+    assert iters == 0
+
+
+def test_warm_start_reduces_iterations_on_a_2d_laplacian():
+    """ARAP 반복 사이에 b 가 조금만 바뀐다 — 그때 warm start 가 값어치를 한다.
+
+    **1차원 사슬로는 이걸 보일 수 없다** [실측 2026-08-14]. 사슬에서는 matvec 한
+    번이 정보를 한 칸씩만 옮기므로 CG 가 n 회를 꽉 채워야 하고, 워엄 스타트든
+    아니든 똑같다 — n=60 에서 59회, n=200 에서 199회로 **차이가 0** 이었다.
+    격자에서는 줄어든다: 12×12 는 59→54, 24×24 는 128→116.
+    실제 쓰임(메쉬 라플라시안)이 격자 쪽이므로 그쪽으로 검사한다.
+    """
+    k = 12
+    n = k * k
+    sp = grid_laplacian(k)
     sp.pin(0)
     b1 = [0.0] * n; b1[n - 1] = 1.0
     x1, cold = sv.cg(sp.matvec, b1, tol=1e-12, maxiter=5000)
     b2 = list(b1); b2[n - 1] = 1.001
     _x2, warm = sv.cg(sp.matvec, b2, x0=x1, tol=1e-12, maxiter=5000)
-    assert warm < cold
+    assert warm < cold, "cold=%d warm=%d" % (cold, warm)
 
 
 def test_cg_reports_when_it_did_not_converge():
@@ -909,6 +958,18 @@ def test_cg_reports_when_it_did_not_converge():
     b = [1.0] * 50; b[0] = 0.0
     _x, iters = sv.cg(sp.matvec, b, tol=1e-30, maxiter=3)
     assert iters == 3          # 상한에 걸렸음을 호출자가 알 수 있다
+
+
+def test_breakdown_reports_as_non_convergence_not_as_success():
+    """준정부호가 깨지면 CG 는 답을 낼 수 없다. 그 시점의 반복 수를 돌려주면
+    정상 수렴과 구별되지 않아 호출자가 쓰레기를 믿는다.
+
+    조작된 경우가 아니다 — 둔각 삼각형이 많으면 cotangent 가중이 음수가 되어
+    강성행렬이 정부호를 잃는다."""
+    sp = sv.Sparse(3)          # 항목이 없다 → A = 0, 첫 반복에서 pAp = 0
+    x, iters = sv.cg(sp.matvec, [1.0, 2.0, 3.0], tol=1e-12, maxiter=1000)
+    assert iters == 1000, "미수렴 신호가 나오지 않았다 (iters=%d)" % iters
+    assert sv.tolist(x) == [0.0, 0.0, 0.0]    # 답이 아니라는 것도 분명하다
 ```
 
 - [ ] **Step 2: 테스트가 실패하는지 확인한다**
@@ -927,8 +988,14 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'solver'`
 numpy 가 있으면 같은 답을 더 빨리 낸다. 두 경로의 일치는 테스트가 지킨다.
 
 **왜 Cholesky 가 아니라 CG 인가.** 주름 벌점을 반복 재가중(IRLS)으로 넣기
-때문에 강성행렬이 매 반복 바뀐다 → 사전 분해를 재사용할 수 없다. 반면 CG 는
-직전 해에서 warm start 하면 수십 회에 수렴한다. 두 결정이 서로를 지지한다.
+때문에 강성행렬이 매 반복 바뀐다 → 사전 분해를 재사용할 수 없다. CG 는 분해가
+없으므로 그 대가를 치르지 않는다. 두 결정이 서로를 지지한다.
+
+**warm start 가 얼마나 버는지는 행렬의 형태에 달렸다** [실측 2026-08-14].
+2차원 격자에서 12×12 는 59→54회, 24×24 는 128→116회로 약 10% 준다.
+1차원 사슬에서는 **하나도 안 준다** — matvec 한 번이 정보를 한 칸씩만 옮겨
+CG 가 n 회를 꽉 채워야 하기 때문이다(n=60 에서 59회, n=200 에서 199회, 차이 0).
+실제 메쉬 라플라시안에서의 값은 아직 재지 않았다 [미검증].
 """
 
 import math
@@ -1059,8 +1126,15 @@ def cg(matvec, b, x0=None, tol=1e-10, maxiter=1000):
     # type: (object, object, object, float, int) -> tuple
     """켤레기울기. (해, 사용한 반복 수) 를 돌려준다.
 
-    반복 수가 maxiter 와 같으면 **수렴하지 않은 것이다.** 호출자가 그걸
-    알 수 있어야 하므로 조용히 해만 돌려주지 않는다.
+    **반복 수가 maxiter 이면 이 해를 믿으면 안 된다.** 그게 유일한 실패 신호다.
+
+    두 가지 실패가 그 신호로 합쳐진다. 하나는 반복 상한 도달, 다른 하나는
+    준정부호 붕괴(pAp ≤ 0)다. 후자는 조작된 경우가 아니다 — 둔각 삼각형이
+    많으면 cotangent 가중이 음수가 되어 강성행렬이 정부호를 잃는다. 둘 다
+    호출자에게는 "이 답을 쓰지 마라"로 같으므로 구별하지 않는다.
+
+    **붕괴에서 그 시점의 반복 수를 돌려주면 안 된다** — 그러면 정상 수렴과
+    구별되지 않아 호출자가 쓰레기를 믿는다.
     """
     V = _backend()
     n = len(b)
@@ -1074,8 +1148,10 @@ def cg(matvec, b, x0=None, tol=1e-10, maxiter=1000):
     for it in range(1, maxiter + 1):
         ap = V.asvec(matvec(p))
         pap = V.dot(p, ap)
-        if pap <= 0.0:          # 준정부호 방어 — 고정을 빠뜨리면 여기 걸린다
-            return x, it
+        if pap <= 0.0:
+            # 준정부호 붕괴. maxiter 를 돌려줘 실패 신호를 낸다 — it 을 돌려주면
+            # 정상 수렴과 구별되지 않는다.
+            return x, maxiter
         alpha = rs / pap
         x = V.axpy(alpha, p, x)
         r = V.axpy(-alpha, ap, r)
@@ -1105,7 +1181,7 @@ git commit -m "feat(unfold): 희소 CG 솔버 — numpy 는 가속기이지 의�
 
 **Files:**
 - Create: `unfold/tests/meshes.py`, `unfold/src/initial.py`, `unfold/tests/test_initial.py`
-- Modify: `unfold/src/solver.py` (`Sparse.pin_many` 추가), `unfold/tests/test_solver.py` (테스트 1개 추가)
+- Modify: `unfold/src/solver.py` (`Sparse.copy` 와 `Sparse.pin_many` 추가), `unfold/tests/test_solver.py` (테스트 1개 추가)
 
 **Interfaces:**
 - Consumes: `topology.build`, `solver.Sparse`, `solver.cg`
@@ -1247,13 +1323,45 @@ def test_shallow_patch_projects_without_flips():
 
 
 def test_deep_cap_projection_folds_over():
-    """이 케이스가 존재하지 않으면 Tutte 폴백은 죽은 코드다."""
-    verts, faces = meshes.sphere_cap(R=300.0, theta=1.4)
+    """이 케이스가 존재하지 않으면 Tutte 폴백은 죽은 코드다.
+
+    **θ 는 적도를 넘어야 한다.** 최적평면은 대칭 때문에 극축에 수직이므로 투영은
+    (R·sinφ) 로 떨어지고, 이건 φ < π/2 에서 단조 증가라 접히지 않는다. 이산화까지
+    감안한 실제 접힘 시작점은 nr=6 에서 **θ≈1.75** 다 [실측 2026-08-14]:
+        θ=1.40 → 뒤집힘 0,  1.70 → 0,  1.75 → 32,  1.90 → 32
+    그래서 1.9 를 쓴다 — 시작점에서 충분히 떨어져 있고 뒤집힌 면이 전체 176 중
+    32 라 count_flips 의 '과반이면 통째로 뒤집힌 것' 분기도 건드리지 않는다.
+    """
+    verts, faces = meshes.sphere_cap(R=300.0, theta=1.9)
     assert ini.count_flips(ini.project(verts, faces), faces) > 0
 
 
+def test_a_globally_mirrored_layout_is_not_counted_as_folded():
+    """거울상은 접힘이 아니다. 이걸 접힘으로 세면 멀쩡한 배치를 버리고 Tutte 로
+    내려가는데, Tutte 는 훨씬 왜곡된 출발점이라 손해다."""
+    verts, faces = meshes.plane_grid()
+    uv = ini.project(verts, faces)
+    mirrored = [(x, -y) for (x, y) in uv]
+    assert ini.count_flips(uv, faces) == 0
+    assert ini.count_flips(mirrored, faces) == 0
+
+
+def test_count_flips_reports_the_minority_orientation():
+    """과반이 접히면 **소수파 수**를 돌려준다 — 문서화된 한계다(docstring 참조).
+
+    이 함수가 이끄는 판단은 0 이냐 아니냐뿐이고 0 은 모든 면이 한 방향일 때만
+    나오므로, 과소보고가 결정을 바꾸지 못한다는 것을 여기서 못박는다."""
+    verts, faces = meshes.sphere_cap(R=300.0, theta=3.0)
+    uv = ini.project(verts, faces)
+    neg = sum(1 for f in faces if ini.signed_area(uv, f) <= ini.FLIP_TOL)
+    assert neg > len(faces) - neg, "이 케이스가 과반 분기를 타야 검사가 성립한다"
+    got = ini.count_flips(uv, faces)
+    assert got == min(neg, len(faces) - neg)
+    assert got > 0          # 접혔다는 사실 자체는 놓치지 않는다
+
+
 def test_tutte_has_no_flips_even_on_the_deep_cap():
-    verts, faces = meshes.sphere_cap(R=300.0, theta=1.4)
+    verts, faces = meshes.sphere_cap(R=300.0, theta=1.9)
     topo = tp.build(len(verts), faces)
     assert topo.ok
     assert ini.count_flips(ini.tutte(verts, topo), faces) == 0
@@ -1275,7 +1383,7 @@ def test_layout_uses_projection_when_it_is_clean():
 
 
 def test_layout_falls_back_to_tutte_when_projection_folds():
-    verts, faces = meshes.sphere_cap(R=300.0, theta=1.4)
+    verts, faces = meshes.sphere_cap(R=300.0, theta=1.9)   # 적도를 넘어야 접힌다
     topo = tp.build(len(verts), faces)
     _uv, method, flips = ini.layout(verts, faces, topo)
     assert method == "tutte" and flips == 0
@@ -1410,7 +1518,25 @@ def signed_area(uv, face):
 
 def count_flips(uv, faces):
     # type: (list, list) -> int
-    """부호면적이 양수가 아닌 면의 수. 다수가 음수면 통째로 뒤집힌 것이므로 한 번 뒤집어 센다."""
+    """**소수파 방향의 면 수**를 돌려준다.
+
+    배치 전체가 거울상으로 나오는 일이 있다(_frame 이 법선에 직교하는 기저를
+    어느 쪽으로 잡느냐에 달렸다). 그걸 "전부 뒤집힘"으로 세면 멀쩡한 배치를
+    버리게 되므로, 과반이 음수면 거울상으로 보고 다시 센다.
+
+    부호면적은 거울에 대해 **정확히** 부호가 뒤집히므로, 결과적으로 이 함수는
+    `min(음수 면 수, 양수 면 수)` 다. 그래서 과반이 접힌 메쉬에서는 접힌 수를
+    과소보고한다 — 실측 [2026-08-14, sphere_cap R=300 nr=6 nt=16]:
+
+        theta 1.9 → 음수 32/176, 반환 32
+        theta 2.5 → 음수 64/176, 반환 64
+        theta 3.0 → 음수 96/176, 반환 **80**
+
+    **그래도 이 함수가 이끄는 판단은 바뀌지 않는다.** 쓰이는 곳은 layout() 의
+    투영↔Tutte 선택과 경고 문구뿐이고 둘 다 0 이냐 아니냐만 본다. 그리고 0 이
+    되는 경우는 **모든** 면이 한 방향일 때뿐이다 — 그건 접힘이 아니라 거울상이고,
+    정확히 이 분기가 노리는 경우다. 80 이든 96 이든 행동은 같다.
+    """
     neg = sum(1 for f in faces if signed_area(uv, f) <= FLIP_TOL)
     if neg > len(faces) - neg:
         flipped = [(x, -y) for (x, y) in uv]
@@ -1455,7 +1581,13 @@ def tutte(verts, topo):
         mat = lap.copy()          # 축마다 다른 값으로 고정하므로 원본을 보존한다
         rhs = [0.0] * n
         mat.pin_many(dict((v, p[axis]) for v, p in fixed.items()), rhs)
-        sol, _it = sv.cg(mat.matvec, rhs, tol=1e-12, maxiter=20 * n + 200)
+        # cg 의 반복 수를 버린다 — **여기서는** 실을 신호가 아니다.
+        # 균등 가중 라플라시안은 가중이 전부 +1 이라 경계를 고정하면 정부호가
+        # 보장되고(음수 cotangent 가 없다), 상한도 넉넉하다. 그래도 실패했다면
+        # 배치가 접혀 layout() 의 flips 로 드러난다.
+        # ARAP 쪽(flatten._global_step)은 사정이 다르다 — 둔각 삼각형이 많으면
+        # cotangent 가 음수가 되어 정부호를 잃으므로 거기서는 반드시 받는다.
+        sol, _iters = sv.cg(mat.matvec, rhs, tol=1e-12, maxiter=20 * n + 200)
         out.append(sv.tolist(sol))
     return list(zip(out[0], out[1]))
 
@@ -1902,7 +2034,11 @@ import solver as sv
 
 DEFAULT_ITERS = 30
 ENERGY_TOL = 1e-6         # 상대 에너지 변화가 이보다 작으면 수렴으로 본다
+ENERGY_FLOOR = 1e-30      # 상대 판정의 분모 하한 — 에너지가 0 인 평면에서 0 나눗셈을 막는다
 CG_REL = 1e-11            # CG 잔차 허용치 (rhs 크기에 상대적)
+CG_TOL_FLOOR = 1.0        # rhs 가 0 에 가까울 때 허용치까지 0 이 되는 것을 막는다
+CG_CAP_PER_VERTEX = 20    # CG 반복 상한 = 이것 × 정점 수 + CG_CAP_BASE
+CG_CAP_BASE = 500
 
 # 삼각형의 (엣지 국소인덱스 쌍, 마주보는 정점의 국소인덱스)
 _EDGES = (((0, 1), 2), ((1, 2), 0), ((2, 0), 1))
@@ -1983,14 +2119,21 @@ def _global_step(n, elements, faces, rots, weights, prev):
     by[0] = 0.0
 
     out = []
+    stalled = 0
+    cap = CG_CAP_PER_VERTEX * n + CG_CAP_BASE
     for b, prev_axis in ((bx, [p[0] for p in prev]), (by, [p[1] for p in prev])):
         scale = math.sqrt(sum(v * v for v in b))
-        tol = CG_REL * (scale + 1.0)
+        tol = CG_REL * (scale + CG_TOL_FLOOR)
         warm = list(prev_axis)
         warm[0] = 0.0
-        sol, _it = sv.cg(mat.matvec, b, x0=warm, tol=tol, maxiter=20 * n + 500)
+        sol, used = sv.cg(mat.matvec, b, x0=warm, tol=tol, maxiter=cap)
+        if used >= cap:
+            # 수렴 실패이거나 준정부호 붕괴다. **버리면 안 되는 신호다** —
+            # 둔각 삼각형이 많으면 cotangent 가중이 음수가 되어 실제로 일어나고,
+            # 그때 이 축의 좌표는 아무 의미가 없다.
+            stalled += 1
         out.append(sv.tolist(sol))
-    return list(zip(out[0], out[1]))
+    return list(zip(out[0], out[1])), stalled
 
 
 def run(verts, faces, topo, props, iters=DEFAULT_ITERS, tol=ENERGY_TOL):
@@ -2009,6 +2152,7 @@ def run(verts, faces, topo, props, iters=DEFAULT_ITERS, tol=ENERGY_TOL):
     sigmas = []
     converged = False
     used = 0
+    stalls = 0
 
     for step in range(1, iters + 1):
         rots, weights, sigmas, e_now = _local_step(elements, faces, uv, penalty)
@@ -2016,10 +2160,11 @@ def run(verts, faces, topo, props, iters=DEFAULT_ITERS, tol=ENERGY_TOL):
         used = step
         if len(history) >= 2:
             prev = history[-2]
-            if prev - e_now <= tol * max(prev, 1e-30):
+            if prev - e_now <= tol * max(prev, ENERGY_FLOOR):
                 converged = True
                 break
-        uv = _global_step(len(verts), elements, faces, rots, weights, uv)
+        uv, stalled = _global_step(len(verts), elements, faces, rots, weights, uv)
+        stalls += stalled
 
     # 마지막 배치에 대한 σ 를 다시 잰다 — 반복 중 값은 직전 배치의 것이다
     _r, _w, sigmas, e_final = _local_step(elements, faces, uv, penalty)
@@ -2031,6 +2176,10 @@ def run(verts, faces, topo, props, iters=DEFAULT_ITERS, tol=ENERGY_TOL):
         notes.append("결과에 뒤집힌 요소가 %d개 있다 — 반복을 늘리거나 메쉬를 고르게 해야 한다" % flips)
     if not converged:
         notes.append("반복 상한 %d 에서 멈췄다 — 수렴하지 않았다" % iters)
+    if stalls:
+        notes.append("선형해가 %d번 실패했다 — 이 결과의 좌표를 믿으면 안 된다. "
+                     "둔각 삼각형이 많아 cotangent 가중이 음수가 되면 강성행렬이 "
+                     "정부호를 잃는다. 메쉬를 고르게 하거나 요소 크기를 바꿔야 한다" % stalls)
 
     return FlattenResult(uv=uv, faces=faces, elements=elements, sigmas=sigmas,
                          energy_history=history, iterations=used,
@@ -2165,6 +2314,45 @@ def test_areas_are_reported_for_both_sides():
     assert m.area_2d == pytest.approx(m.area_3d, rel=1e-9)
 
 
+class _FakeElement(object):
+    def __init__(self, area):
+        self.area = area
+
+
+class _FakeResult(object):
+    """전부 뒤집힌 결과를 만들기 위한 최소 대역품.
+
+    가짜 동작을 검사하는 게 아니라, metrics 가 **읽는 값의 모양**만 갖춘 입력이다.
+    실제 전개로는 이 상태를 안정적으로 만들 수 없어서(정렬이 전역 거울상을 되돌린다)
+    직접 만든다.
+    """
+
+    def __init__(self, n):
+        self.sigmas = [(1.2, -0.8)] * n
+        self.elements = [_FakeElement(1.0) for _ in range(n)]
+        self.uv = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)]
+        self.faces = [(0, 1, 2)] * n
+        self.converged = True
+        self.iterations = 3
+        self.energy_history = [1.0, 0.5]
+
+
+def test_all_flipped_is_unjudged_not_passed():
+    """잰 요소가 하나도 없는데 '통과'라고 하면 안 된다 — 이 모듈의 존재 이유다.
+
+    빈 wrinkle·tear 목록을 통과로 읽으면 검사하지 않은 것을 괜찮다고 말하게 된다."""
+    props = mt.MaterialProps(elong_max=0.12, source="테스트")
+    m = mx.evaluate(_FakeResult(4), props)
+    assert status_of(m, "주름") == "미판정"
+    assert status_of(m, "찢어짐") == "미판정"
+    assert m.max_forming_strain is None
+    assert len(m.flip_faces) == 4
+    for name in ("주름", "찢어짐"):
+        detail = [d for n, _s, d in m.checks if n == name][0]
+        assert "뒤집" in detail
+        assert "inf" not in detail
+
+
 def test_non_convergence_is_a_warning_not_silence():
     verts, faces = meshes.sphere_cap(nr=5, nt=12)
     topo = tp.build(len(verts), faces)
@@ -2222,11 +2410,19 @@ def _tri_area_2d(uv, face):
 
 def evaluate(res, props):
     # type: (object, object) -> Metrics
-    """FlattenResult 를 판정으로 옮긴다."""
+    """FlattenResult 를 판정으로 옮긴다.
+
+    `max_forming_strain` 은 잰 요소가 하나도 없으면 **None** 이다(전부 뒤집힌 경우).
+    `sigma_min` 은 뒤집힌 요소의 음수 s2 를 포함하므로 음수가 나올 수 있다 — 그건
+    성형비가 아니라 뒤집힘의 표시이고, 실제 개수는 `flip_faces` 가 말한다.
+    `area_2d` 는 삼각형 면적의 **절댓값** 합이라 겹친 부분이 상쇄되지 않는다.
+    따라서 area_2d ≈ area_3d 를 접힘 없음의 증거로 쓰면 안 된다 — 그건 flip_faces 의 일이다.
+    """
     wrinkle, tear, flip = [], [], []
     s_min = float("inf")
     s_max = -float("inf")
     worst_strain = -float("inf")
+    counted = 0                              # 변형률을 실제로 잰 요소 수
 
     for t, (s1, s2) in enumerate(res.sigmas):
         s_max = max(s_max, s1)
@@ -2234,6 +2430,7 @@ def evaluate(res, props):
         if s2 < 0.0:
             flip.append(t)
             continue
+        counted += 1
         if s1 > 1.0 + WRINKLE_TOL:
             wrinkle.append(t)
         strain = forming_strain(s2)          # 가장 작은 σ 가 가장 큰 인장을 낳는다
@@ -2246,28 +2443,38 @@ def evaluate(res, props):
 
     checks = []
 
-    if wrinkle:
-        checks.append(("주름", "경고",
-                       "성형 중 압축되는 요소 %d개 (전체 %d개). 최대 σ = %.4f — "
-                       "판재는 압축을 받으면 주름진다"
-                       % (len(wrinkle), len(res.sigmas), s_max)))
+    if not counted:
+        # **잰 요소가 하나도 없다.** 이때 빈 wrinkle·tear 목록을 "통과"로 읽으면
+        # 이 모듈이 막으라고 만들어진 바로 그 실패가 된다 — 검사하지 않은 것을
+        # 괜찮다고 말하는 것. 게다가 worst_strain 이 -inf 로 남아 상세 문구에
+        # "-inf%" 가 찍힌다.
+        why = ("요소 %d개가 전부 뒤집혔다 — 변형률을 잴 수 있는 요소가 하나도 없다. "
+               "이 결과로는 주름도 찢어짐도 판정할 수 없다" % len(res.sigmas))
+        checks.append(("주름", "미판정", why))
+        checks.append(("찢어짐", "미판정", why))
     else:
-        checks.append(("주름", "통과",
-                       "모든 요소가 σ ≤ 1 이다 (최대 %.4f) — 성형이 인장만으로 이루어진다"
-                       % s_max))
+        if wrinkle:
+            checks.append(("주름", "경고",
+                           "성형 중 압축되는 요소 %d개 (전체 %d개). 최대 σ = %.4f — "
+                           "판재는 압축을 받으면 주름진다"
+                           % (len(wrinkle), len(res.sigmas), s_max)))
+        else:
+            checks.append(("주름", "통과",
+                           "모든 요소가 σ ≤ 1 이다 (최대 %.4f) — 성형이 인장만으로 이루어진다"
+                           % s_max))
 
-    if props.elong_max is None:
-        checks.append(("찢어짐", "미판정",
-                       "elong_max 가 없다. 성형 변형률 최대 %.2f%% 를 잰 것뿐이고 "
-                       "한계와 비교하지 않았다" % (worst_strain * 100.0)))
-    elif tear:
-        checks.append(("찢어짐", "경고",
-                       "연신 한계 %.1f%% 를 넘는 요소 %d개. 최대 %.2f%%"
-                       % (props.elong_max * 100.0, len(tear), worst_strain * 100.0)))
-    else:
-        checks.append(("찢어짐", "통과",
-                       "최대 성형 변형률 %.2f%% < 한계 %.1f%%"
-                       % (worst_strain * 100.0, props.elong_max * 100.0)))
+        if props.elong_max is None:
+            checks.append(("찢어짐", "미판정",
+                           "elong_max 가 없다. 성형 변형률 최대 %.2f%% 를 잰 것뿐이고 "
+                           "한계와 비교하지 않았다" % (worst_strain * 100.0)))
+        elif tear:
+            checks.append(("찢어짐", "경고",
+                           "연신 한계 %.1f%% 를 넘는 요소 %d개. 최대 %.2f%%"
+                           % (props.elong_max * 100.0, len(tear), worst_strain * 100.0)))
+        else:
+            checks.append(("찢어짐", "통과",
+                           "최대 성형 변형률 %.2f%% < 한계 %.1f%%"
+                           % (worst_strain * 100.0, props.elong_max * 100.0)))
 
     if flip:
         checks.append(("뒤집힘", "경고",
@@ -2282,7 +2489,8 @@ def evaluate(res, props):
         checks.append(("수렴", "경고",
                        "반복 상한 %d 에서 멈췄다 — 반복을 늘려야 한다" % res.iterations))
 
-    return Metrics(sigma_min=s_min, sigma_max=s_max, max_forming_strain=worst_strain,
+    return Metrics(sigma_min=s_min, sigma_max=s_max,
+                   max_forming_strain=(worst_strain if counted else None),
                    wrinkle_faces=wrinkle, tear_faces=tear, flip_faces=flip,
                    area_3d=area_3d, area_2d=area_2d, checks=checks)
 ```
@@ -2326,7 +2534,12 @@ git commit -m "feat(unfold): 주름·찢어짐 판정 — 미판정을 통과로
     평면        항등
     원기둥      전개 가능 → 가로 R·β, 세로 h 의 직사각형
     원뿔        전개 가능 → 바깥 호 길이 l1·β·sin α
-    구면 캡     전개 불가 → 외곽 반경이 2R·sin(θ/2) 와 R·θ **사이**
+    구면 캡     전개 불가 → 외곽 반경이 **R·sinθ 와 R·θ 사이**
+
+**등면적 반경 2R·sin(θ/2) 는 하한이 아니다**(spec §10.1.1). 등면적은 제3의 사상이고
+ARAP 은 등면적법이 아니다 — 실제로 ARAP 은 등면적보다 조금 아래로 떨어진다.
+진짜 극단은 ARAP 에너지의 두 항을 각각 0 으로 만드는 사상이다:
+σ_hoop=1 → r=R·sinφ (하한),  σ_r=1 → r=R·φ (상한).
 """
 
 import math
@@ -2382,16 +2595,22 @@ def test_cone_outer_arc_length_matches_the_sector_formula():
 def test_sphere_cap_lands_between_the_two_closed_form_extremes():
     """spec §10.1 의 핵심 검사.
 
-    등면적 전개 반경 2R·sin(θ/2)  ≤  결과  ≤  등거리 전개 반경 R·θ
-    벗어나면 구현이 틀린 것이다.
+    축대칭 전개 r(φ) 에서 ARAP 에너지의 두 항을 각각 0 으로 만드는 사상이 극단이다:
+        σ_hoop = 1  →  r = R·sinφ  →  외곽 R·sinθ   (정사영)
+        σ_r    = 1  →  r = R·φ     →  외곽 R·θ      (등거리)
+    각 극단은 한 항만 0 이고 다른 항이 양수이므로 최소점은 그 **사이**에 있다.
+
+    **등면적 반경 2R·sin(θ/2) 는 하한이 아니다** (spec §10.1.1). 등면적은 제3의
+    사상이고 ARAP 은 등면적법이 아니다. 실제로 ARAP 은 등면적보다 조금 아래로
+    떨어진다 — θ=0.6 에서 295.498 vs 295.52 [실측 2026-08-14].
     """
     R, theta = 500.0, 0.6
     verts, faces = meshes.sphere_cap(R=R, theta=theta, nr=8, nt=24)
     topo = tp.build(len(verts), faces)
     res = fl.run(verts, faces, topo, mt.DEFAULT, iters=120)
 
-    lo = 2.0 * R * math.sin(theta / 2.0)
-    hi = R * theta
+    lo = R * math.sin(theta)        # σ_hoop = 1 극단
+    hi = R * theta                  # σ_r = 1 극단
     assert lo < hi                                   # 검사 자체가 성립하는지
     r_mean = sum(outer_radii(res, topo.boundary_loops[0])) / len(topo.boundary_loops[0])
     assert lo - 1e-6 <= r_mean <= hi + 1e-6, \
@@ -2408,11 +2627,23 @@ def test_sphere_cap_result_is_axisymmetric():
     assert spread < 5e-3, "축대칭이 깨졌다 — 상대 폭 %.4f" % spread
 
 
-def test_equal_area_bracket_is_arithmetically_right():
-    """검산: 구면 캡 면적 2πR²(1−cosθ) = 원판 면적 π(2R sin(θ/2))²"""
+def test_the_three_closed_forms_are_ordered_as_claimed():
+    """R·sinθ < 2R·sin(θ/2) < R·θ.
+
+    등면적 반경이 두 극단 **사이**에 있다는 것 자체는 참이다 — 다만 그게
+    ARAP 결과의 하한이라는 뜻은 아니다(spec §10.1.1). 순서가 깨지면 세 공식 중
+    하나를 잘못 적은 것이므로 여기서 잡는다.
+
+    등면적 공식 검산도 겸한다: 구면 캡 면적 2πR²(1−cosθ) = 원판 면적 π(2R sin(θ/2))².
+    """
     R, theta = 500.0, 0.6
+    lo = R * math.sin(theta)
+    eq = 2.0 * R * math.sin(theta / 2.0)
+    hi = R * theta
+    assert lo < eq < hi
+
     cap = 2.0 * math.pi * R * R * (1.0 - math.cos(theta))
-    disk = math.pi * (2.0 * R * math.sin(theta / 2.0)) ** 2
+    disk = math.pi * eq ** 2
     assert cap == pytest.approx(disk)
 
 
@@ -2432,7 +2663,15 @@ def test_refining_the_mesh_makes_the_answer_converge():
 
 
 def test_pure_and_numpy_paths_give_the_same_flattening():
-    """spec §10.3 — 두 경로가 같은 골든 픽스처를 통과해야 한다."""
+    """spec §10.3 — 두 경로가 같은 답을 내야 한다.
+
+    **좌표를 직접 비교하지 않는다.** 구면 캡은 축대칭이라 flatten.align() 의 주축이
+    수치적으로 정해지지 않고(공분산이 등방이라 주축이 없다), 두 경로의 부동소수 차이가
+    정렬 각도로 증폭된다. 그건 솔버가 다른 답을 냈다는 뜻이 아니다 — flatten.py 가
+    스스로 문서화한 성질이다.
+
+    그래서 회전 불변량으로 비교한다: 무게중심까지의 거리 분포와 요소별 σ.
+    """
     if not sv.HAS_NUMPY:
         pytest.skip("이 환경에 numpy 가 없다")
     mesh = meshes.sphere_cap(R=400.0, theta=0.5, nr=5, nt=14)
@@ -2444,8 +2683,18 @@ def test_pure_and_numpy_paths_give_the_same_flattening():
         fast = run(mesh, iters=60)
     finally:
         sv.FORCE_PURE = before
-    assert [x for p in pure.uv for x in p] == pytest.approx(
-        [x for p in fast.uv for x in p], abs=1e-6)
+
+    def invariants(res):
+        cx = sum(p[0] for p in res.uv) / len(res.uv)
+        cy = sum(p[1] for p in res.uv) / len(res.uv)
+        radii = sorted(math.hypot(p[0] - cx, p[1] - cy) for p in res.uv)
+        sig = sorted(s for pair in res.sigmas for s in pair)
+        return radii, sig
+
+    pure_r, pure_s = invariants(pure)
+    fast_r, fast_s = invariants(fast)
+    assert pure_r == pytest.approx(fast_r, abs=1e-9)
+    assert pure_s == pytest.approx(fast_s, abs=1e-9)
 
 
 def test_dome_wrinkle_warning_is_not_a_false_positive_on_a_cylinder():
@@ -2508,7 +2757,11 @@ def main():
              for v in topo.boundary_loops[0]]
     data = {
         "case": {"R": R, "theta": THETA, "nr": NR, "nt": NT, "iters": ITERS},
-        "bracket": {"equal_area": 2.0 * R * math.sin(THETA / 2.0), "isometric": R * THETA},
+        "bracket": {
+            "orthographic": R * math.sin(THETA),              # σ_hoop=1 극단 — **하한**
+            "isometric": R * THETA,                           # σ_r=1 극단 — **상한**
+            "equal_area": 2.0 * R * math.sin(THETA / 2.0),    # 참고값. 하한이 아니다
+        },
         "outer_radius_mean": sum(radii) / len(radii),
         "sigma_min": m.sigma_min,
         "sigma_max": m.sigma_max,
@@ -2536,7 +2789,9 @@ Run: `python unfold/tools/dump_fixture.py`
 
 출력을 보고 **손으로 확인한다**:
 
-1. `outer_radius_mean` 이 `bracket.equal_area`(≈ 295.5) 와 `bracket.isometric`(300.0) 사이에 있는가
+1. `outer_radius_mean` 이 `bracket.orthographic`(≈ 282.3) 과 `bracket.isometric`(300.0)
+   **사이**에 있는가. 참고로 등면적 반경은 295.5 이고 **ARAP 은 그보다 조금 아래로
+   떨어지는 것이 정상이다**(spec §10.1.1) — 295.5 를 하한으로 읽지 말 것
 2. `sigma_max` 가 1 보다 큰가 (돔이므로 원주방향이 늘어나야 한다)
 3. `area_2d / area_3d` 가 1 근처인가 (ARAP 은 등면적에 가깝게 나온다)
 4. `converged` 가 true 인가
@@ -2598,6 +2853,8 @@ git commit -m "test(unfold): 이론해 대조 — 구면 캡이 두 극단 사�
   - `blank.simplify(poly, features, tol) -> list[(x, y)]`
   - `blank.offset(poly, dist) -> list[(x, y)]`
   - `blank.self_intersections(poly) -> list[(i, j)]`
+  - `blank.sharp_corners(poly) -> list[int]` — 마이터 제한이 걸리는 꼭짓점
+  - `blank.sharp_angle_limit() -> float` — 그 임계 내각 (라디안)
   - `blank.point_in_polygon(pt, poly) -> bool`
   - `blank.distance_to_polygon(pt, poly) -> float`
   - `blank.build(uv, topo, allow_mm, fit_tol=1.0, feature_deg=30.0) -> BlankResult`
@@ -2728,6 +2985,49 @@ def test_build_notes_say_what_was_done():
     assert "12" in text and ("여유" in text or "오프셋" in text)
 
 
+SPIKE = [(0.0, 0.0), (100.0, 0.0), (50.0, 400.0)]     # 꼭짓점 2 의 내각 약 14.2도
+
+
+class _FakeTopo(object):
+    """boundary_loops 만 있는 최소 대역품. blank 는 그것만 읽는다."""
+
+    def __init__(self, loop):
+        self.boundary_loops = [loop]
+
+
+def test_a_sharp_corner_is_reported_because_the_offset_cannot_keep_its_promise():
+    """마이터 제한이 걸리면 오프셋 정점의 수직거리가 dist·denom/MITER_MIN 로 줄어
+    **약속한 거리보다 가까워진다.** 스파이크에서는 어떤 마이터/베벨로도 못 지킨다.
+
+    v1 은 기하를 고치지 않고 재서 알린다. 그러니 최소한 **알아채기는** 해야 한다."""
+    assert bk.sharp_corners(SPIKE) == [2]
+    assert bk.sharp_corners(SQUARE) == []      # 90도는 걸리지 않는다
+
+    dist = 10.0
+    curve = bk.offset(SPIKE, dist)
+    worst = min(bk.distance_to_polygon(p, curve) for p in SPIKE)
+    assert worst < dist - 1e-6, \
+        "제한이 걸렸는데 여유가 줄지 않았다 — 검사가 성립하지 않는다 (worst=%.4f)" % worst
+
+
+def test_build_says_out_loud_when_the_clearance_falls_short():
+    """보증이 깨지면 조용히 넘기지 않는다 — 이 모듈의 유일한 약속이다."""
+    b = bk.build(SPIKE, _FakeTopo(list(range(len(SPIKE)))), allow_mm=10.0, fit_tol=0.0)
+    text = " ".join(b.notes)
+    assert "뾰족한 꼭짓점" in text
+    assert "미달" in text
+    assert b.clearance_min < 10.0
+
+
+def test_a_blunt_shape_reports_neither_warning():
+    """경고가 아무 데서나 뜨면 아무도 안 본다."""
+    b = bk.build(SQUARE, _FakeTopo(list(range(len(SQUARE)))), allow_mm=10.0, fit_tol=0.0)
+    text = " ".join(b.notes)
+    assert "뾰족한 꼭짓점" not in text
+    assert "미달" not in text
+    assert b.clearance_min >= 10.0 - 1e-6
+
+
 def test_clearance_is_measured_against_the_worst_point_not_the_average():
     verts, faces = meshes.plane_grid()
     topo = tp.build(len(verts), faces)
@@ -2753,17 +3053,32 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'blank'`
     ③ 오프셋 바깥으로 (allow_mm + fit_tol) → 자기교차 검사
 
 **보증**: 단순화가 안쪽으로 최대 fit_tol 파고들 수 있으므로 오프셋을 그만큼 더
-준다. 그러면 최종 곡선은 원 폴리라인 바깥으로 항상 allow_mm 이상 떨어져 있다.
+준다. 그러면 최종 곡선은 원 폴리라인 바깥으로 allow_mm 이상 떨어져 있다.
 재료를 조금 더 쓰는 대신 과소재단이 구조적으로 불가능해진다.
 
-**알려진 한계**: 오목 모서리에서 오프셋이 자기교차할 수 있다. v1 은 고치지 않고
+**보증이 성립하지 않는 단 하나의 경우 — 뾰족한 꼭짓점.** 마이터 제한이 걸리면
+(`denom < MITER_MIN`) 오프셋 정점의 실제 수직거리가 `dist · denom/MITER_MIN` 로
+줄어 **약속한 거리보다 가까워진다.** 뾰족해질수록 한없이 나빠진다 — 실측으로
+10mm 요구에 0.5mm 까지 떨어졌다.
+
+내각 α 에 대해 `b·n = sin(α/2)` 이므로 제한이 걸리는 조건은
+`α < 2·asin(MITER_MIN)` = **약 23.1도**다. 스파이크에서는 어떤 마이터/베벨로도
+거리를 지킬 수 없다(둥근 조인이어야 가능하다).
+
+v1 은 기하를 고치지 않고 **재서 알린다** — 자기교차를 다루는 방식과 같다.
+`build()` 가 `sharp_corners()` 로 그 꼭짓점을 세고, 실측 여유가 요구치에 미달하면
+`notes` 에 굵게 적는다. **조용히 깨지는 것만은 막는다.**
+
+**또 하나의 한계**: 오목 모서리에서 오프셋이 자기교차할 수 있다. v1 은 고치지 않고
 검출해서 알린다(spec §8.1). 외장 패널은 대개 볼록 사각형이라 드물다.
 """
 
 import math
 
-FEATURE_DEG = 30.0        # 꺾임각이 이보다 크면 코너로 본다
-MITER_MIN = 0.2           # 뾰족한 모서리에서 오프셋이 폭발하는 것을 막는다
+FEATURE_DEG = 30.0            # 꺾임각이 이보다 크면 코너로 본다
+MITER_MIN = 0.2               # 뾰족한 모서리에서 오프셋이 폭발하는 것을 막는다
+CLEARANCE_TOL = 1e-6          # 여유 미달 판정의 수치 여유 (mm)
+MIN_POLY_FOR_SIMPLIFY = 4     # 이보다 적으면 고정점 구간 논리가 성립하지 않는다
 EPS = 1e-12
 
 
@@ -2835,7 +3150,7 @@ def simplify(poly, features, tol):
     # type: (list, list, float) -> list
     """특징점을 고정한 채 그 사이 구간만 단순화한다."""
     n = len(poly)
-    if tol <= 0.0 or n < 4:
+    if tol <= 0.0 or n < MIN_POLY_FOR_SIMPLIFY:
         return list(poly)
     anchors = sorted(set(features))
     if len(anchors) < 2:
@@ -2887,6 +3202,38 @@ def offset(poly, dist):
     return out
 
 
+def sharp_angle_limit():
+    # type: () -> float
+    """마이터 제한이 걸리는 내각의 상한 (라디안). MITER_MIN=0.2 → 약 23.1도."""
+    return 2.0 * math.asin(min(1.0, MITER_MIN))
+
+
+def sharp_corners(poly):
+    # type: (list) -> list
+    """마이터 제한이 걸릴 만큼 뾰족한 꼭짓점의 인덱스.
+
+    **여기서는 오프셋이 약속한 거리를 지키지 못한다.** 내각 α 에 대해
+    `b·n = sin(α/2)` 이므로 제한 조건은 `sin(α/2) < MITER_MIN`, 즉
+    `α < 2·asin(MITER_MIN)` 이다.
+
+    꺾임각의 크기만 쓰므로 감김 방향과 무관하다. 오목한 스파이크도 같이 잡히는데,
+    그쪽은 자기교차 검사에도 걸린다.
+    """
+    n = len(poly)
+    limit = sharp_angle_limit()
+    out = []
+    for i in range(n):
+        p, q, r = poly[i - 1], poly[i], poly[(i + 1) % n]
+        ax, ay = q[0] - p[0], q[1] - p[1]
+        bx, by = r[0] - q[0], r[1] - q[1]
+        if math.hypot(ax, ay) < EPS or math.hypot(bx, by) < EPS:
+            continue
+        turn = abs(math.atan2(ax * by - ay * bx, ax * bx + ay * by))
+        if math.pi - turn < limit:
+            out.append(i)
+    return out
+
+
 def _seg_cross(a, b, c, d):
     def side(p, q, r):
         return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
@@ -2911,7 +3258,13 @@ def self_intersections(poly):
 
 def point_in_polygon(pt, poly):
     # type: (tuple, list) -> bool
-    """광선 투사. 경계 위의 점은 안쪽으로 친다."""
+    """광선 투사.
+
+    **경계 위의 점은 결과가 일정하지 않다** — 변의 방향에 따라 True 도 False 도 나온다
+    (실측: 정사각형에서 (0,0)·(50,0) 은 True, (100,50)·(50,100) 은 False).
+    광선 투사의 알려진 취약점이고 v1 은 보정하지 않는다. build() 는 오프셋으로 밀어낸
+    곡선에 대해 원 경계점을 검사하므로 점이 변 위에 정확히 놓이는 일이 없다.
+    """
     x, y = pt
     inside = False
     n = len(poly)
@@ -2973,6 +3326,12 @@ def build(uv, topo, allow_mm, fit_tol=1.0, feature_deg=FEATURE_DEG):
         notes.append("재단선이 %d군데에서 자기교차한다 — 오목 모서리다. "
                      "v1 은 고치지 않으니 손으로 확인해야 한다" % len(hits))
 
+    sharp = sharp_corners(simple)
+    if sharp:
+        notes.append("내각 %.1f도 미만인 뾰족한 꼭짓점 %d개 — 마이터 제한이 걸려 "
+                     "그 자리에서는 오프셋이 약속한 여유를 지키지 못한다"
+                     % (math.degrees(sharp_angle_limit()), len(sharp)))
+
     outside = [p for p in src if not point_in_polygon(p, curve)]
     if outside:
         notes.append("경계점 %d개가 재단선 **밖에** 있다 — 과소재단이다. "
@@ -2981,6 +3340,12 @@ def build(uv, topo, allow_mm, fit_tol=1.0, feature_deg=FEATURE_DEG):
     else:
         clearance = min(distance_to_polygon(p, curve) for p in src)
         notes.append("최소 여유 실측 %.3f mm" % clearance)
+        if clearance < allow_mm - CLEARANCE_TOL:
+            # 보증이 깨졌다. 조용히 넘기면 안 된다 — 이 모듈의 유일한 약속이다.
+            notes.append("**여유가 요구치에 미달한다 (%.3f < %.3f mm).** 뾰족한 꼭짓점에서 "
+                         "마이터 제한이 걸렸을 가능성이 크다(위 항목 참조). 재단선을 "
+                         "그대로 쓰면 그 자리가 과소재단이 된다"
+                         % (clearance, allow_mm))
 
     return BlankResult(curve=curve, source=src, features=feats,
                        clearance_min=clearance, intersections=hits, notes=notes)
@@ -3114,6 +3479,10 @@ def summarize(res, m, bl, props):
     warn = ["[%s] %s: %s" % (status, name, detail) for name, status, detail in m.checks]
 
     ratio = (m.area_2d / m.area_3d) if m.area_3d else float("nan")
+    # metrics 는 잰 요소가 하나도 없으면 None 을 준다(전부 뒤집힌 경우).
+    # 그때 숫자를 지어내지 않는다 — 못 쟀다고 말한다.
+    strain = ("측정 불가 — 뒤집힌 요소뿐이다" if m.max_forming_strain is None
+              else "%.2f%%" % (m.max_forming_strain * 100.0))
     lines = [
         "반복 %d회, %s (에너지 %.6g)"
         % (res.iterations, "수렴" if res.converged else "**미수렴**",
@@ -3121,7 +3490,7 @@ def summarize(res, m, bl, props):
         "초기 배치: %s" % res.method,
         "σ 범위 %.4f ~ %.4f   (σ>1 은 성형에서 압축 = 주름 위험)"
         % (m.sigma_min, m.sigma_max),
-        "최대 성형 변형률 %.2f%%" % (m.max_forming_strain * 100.0),
+        "최대 성형 변형률 %s" % strain,
         "면적 3D %.1f mm² → 평면 %.1f mm² (비 %.4f)" % (m.area_3d, m.area_2d, ratio),
     ]
     if bl is not None:
