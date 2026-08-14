@@ -27,7 +27,11 @@ import solver as sv
 
 DEFAULT_ITERS = 30
 ENERGY_TOL = 1e-6         # 상대 에너지 변화가 이보다 작으면 수렴으로 본다
+ENERGY_FLOOR = 1e-30      # 상대 판정의 분모 하한 — 에너지가 0 인 평면에서 0 나눗셈을 막는다
 CG_REL = 1e-11            # CG 잔차 허용치 (rhs 크기에 상대적)
+CG_TOL_FLOOR = 1.0        # rhs 가 0 에 가까울 때 허용치까지 0 이 되는 것을 막는다
+CG_CAP_PER_VERTEX = 20    # CG 반복 상한 = 이것 × 정점 수 + CG_CAP_BASE
+CG_CAP_BASE = 500
 
 # 삼각형의 (엣지 국소인덱스 쌍, 마주보는 정점의 국소인덱스)
 _EDGES = (((0, 1), 2), ((1, 2), 0), ((2, 0), 1))
@@ -109,10 +113,10 @@ def _global_step(n, elements, faces, rots, weights, prev):
 
     out = []
     stalled = 0
-    cap = 20 * n + 500
+    cap = CG_CAP_PER_VERTEX * n + CG_CAP_BASE
     for b, prev_axis in ((bx, [p[0] for p in prev]), (by, [p[1] for p in prev])):
         scale = math.sqrt(sum(v * v for v in b))
-        tol = CG_REL * (scale + 1.0)
+        tol = CG_REL * (scale + CG_TOL_FLOOR)
         warm = list(prev_axis)
         warm[0] = 0.0
         sol, used = sv.cg(mat.matvec, b, x0=warm, tol=tol, maxiter=cap)
@@ -149,7 +153,7 @@ def run(verts, faces, topo, props, iters=DEFAULT_ITERS, tol=ENERGY_TOL):
         used = step
         if len(history) >= 2:
             prev = history[-2]
-            if prev - e_now <= tol * max(prev, 1e-30):
+            if prev - e_now <= tol * max(prev, ENERGY_FLOOR):
                 converged = True
                 break
         uv, stalled = _global_step(len(verts), elements, faces, rots, weights, uv)
