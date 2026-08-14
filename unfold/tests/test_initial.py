@@ -43,6 +43,30 @@ def test_deep_cap_projection_folds_over():
     assert ini.count_flips(ini.project(verts, faces), faces) > 0
 
 
+def test_a_globally_mirrored_layout_is_not_counted_as_folded():
+    """거울상은 접힘이 아니다. 이걸 접힘으로 세면 멀쩡한 배치를 버리고 Tutte 로
+    내려가는데, Tutte 는 훨씬 왜곡된 출발점이라 손해다."""
+    verts, faces = meshes.plane_grid()
+    uv = ini.project(verts, faces)
+    mirrored = [(x, -y) for (x, y) in uv]
+    assert ini.count_flips(uv, faces) == 0
+    assert ini.count_flips(mirrored, faces) == 0
+
+
+def test_count_flips_reports_the_minority_orientation():
+    """과반이 접히면 **소수파 수**를 돌려준다 — 문서화된 한계다(docstring 참조).
+
+    이 함수가 이끄는 판단은 0 이냐 아니냐뿐이고 0 은 모든 면이 한 방향일 때만
+    나오므로, 과소보고가 결정을 바꾸지 못한다는 것을 여기서 못박는다."""
+    verts, faces = meshes.sphere_cap(R=300.0, theta=3.0)
+    uv = ini.project(verts, faces)
+    neg = sum(1 for f in faces if ini.signed_area(uv, f) <= ini.FLIP_TOL)
+    assert neg > len(faces) - neg, "이 케이스가 과반 분기를 타야 검사가 성립한다"
+    got = ini.count_flips(uv, faces)
+    assert got == min(neg, len(faces) - neg)
+    assert got > 0          # 접혔다는 사실 자체는 놓치지 않는다
+
+
 def test_tutte_has_no_flips_even_on_the_deep_cap():
     verts, faces = meshes.sphere_cap(R=300.0, theta=1.9)
     topo = tp.build(len(verts), faces)
