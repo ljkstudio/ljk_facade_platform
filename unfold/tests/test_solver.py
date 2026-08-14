@@ -161,3 +161,12 @@ def test_breakdown_reports_as_non_convergence_not_as_success():
     x, iters = sv.cg(sp.matvec, [1.0, 2.0, 3.0], tol=1e-12, maxiter=1000)
     assert iters == 1000, "미수렴 신호가 나오지 않았다 (iters=%d)" % iters
     assert sv.tolist(x) == [0.0, 0.0, 0.0]    # 답이 아니라는 것도 분명하다
+
+
+def test_pin_many_moves_known_values_to_the_right_hand_side():
+    """경계를 고정하고 내부만 푸는 자리. 값을 rhs 로 안 옮기면 답이 통째로 틀린다."""
+    sp = path_laplacian(3)
+    b = [0.0, 0.0, 0.0]
+    sp.pin_many({0: 0.0, 2: 4.0}, b)
+    x, _ = sv.cg(sp.matvec, b, tol=1e-14, maxiter=100)
+    assert sv.tolist(x) == pytest.approx([0.0, 2.0, 4.0], abs=1e-10)

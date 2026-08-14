@@ -115,6 +115,31 @@ class Sparse(object):
         self._d[(idx, idx)] = 1.0
         self._ready = False
 
+    def copy(self):
+        # type: () -> object
+        """같은 항목을 가진 새 행렬. 축마다 다른 값으로 고정해야 하므로 필요하다."""
+        out = Sparse(self.n)
+        out._d = dict(self._d)
+        return out
+
+    def pin_many(self, values, b):
+        # type: (dict, list) -> None
+        """여러 정점을 주어진 값으로 고정한다 (Dirichlet 경계). `b` 를 제자리에서 고친다.
+
+        **열의 기여를 rhs 로 옮기고 나서** 지워야 한다. 그냥 지우면 고정된 값이
+        내부 방정식에서 사라져 답이 통째로 틀린다 — 오류가 아니라 조용히 틀린다.
+        """
+        for k, t in values.items():
+            for ij in [ij for ij in self._d if ij[1] == k and ij[0] != k]:
+                b[ij[0]] -= self._d[ij] * t
+                del self._d[ij]
+        for k, t in values.items():
+            for ij in [ij for ij in self._d if ij[0] == k]:
+                del self._d[ij]
+            self._d[(k, k)] = 1.0
+            b[k] = t
+        self._ready = False
+
     def _finalize(self):
         items = sorted(self._d.items())
         self._r = [ij[0] for ij, _v in items]
