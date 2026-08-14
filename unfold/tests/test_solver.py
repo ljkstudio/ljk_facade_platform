@@ -149,3 +149,15 @@ def test_cg_reports_when_it_did_not_converge():
     b = [1.0] * 50; b[0] = 0.0
     _x, iters = sv.cg(sp.matvec, b, tol=1e-30, maxiter=3)
     assert iters == 3          # 상한에 걸렸음을 호출자가 알 수 있다
+
+
+def test_breakdown_reports_as_non_convergence_not_as_success():
+    """준정부호가 깨지면 CG 는 답을 낼 수 없다. 그 시점의 반복 수를 돌려주면
+    정상 수렴과 구별되지 않아 호출자가 쓰레기를 믿는다.
+
+    조작된 경우가 아니다 — 둔각 삼각형이 많으면 cotangent 가중이 음수가 되어
+    강성행렬이 정부호를 잃는다."""
+    sp = sv.Sparse(3)          # 항목이 없다 → A = 0, 첫 반복에서 pAp = 0
+    x, iters = sv.cg(sp.matvec, [1.0, 2.0, 3.0], tol=1e-12, maxiter=1000)
+    assert iters == 1000, "미수렴 신호가 나오지 않았다 (iters=%d)" % iters
+    assert sv.tolist(x) == [0.0, 0.0, 0.0]    # 답이 아니라는 것도 분명하다

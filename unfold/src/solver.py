@@ -144,8 +144,15 @@ def cg(matvec, b, x0=None, tol=1e-10, maxiter=1000):
     # type: (object, object, object, float, int) -> tuple
     """켤레기울기. (해, 사용한 반복 수) 를 돌려준다.
 
-    반복 수가 maxiter 와 같으면 **수렴하지 않은 것이다.** 호출자가 그걸
-    알 수 있어야 하므로 조용히 해만 돌려주지 않는다.
+    **반복 수가 maxiter 이면 이 해를 믿으면 안 된다.** 그게 유일한 실패 신호다.
+
+    두 가지 실패가 그 신호로 합쳐진다. 하나는 반복 상한 도달, 다른 하나는
+    준정부호 붕괴(pAp ≤ 0)다. 후자는 조작된 경우가 아니다 — 둔각 삼각형이
+    많으면 cotangent 가중이 음수가 되어 강성행렬이 정부호를 잃는다. 둘 다
+    호출자에게는 "이 답을 쓰지 마라"로 같으므로 구별하지 않는다.
+
+    **붕괴에서 그 시점의 반복 수를 돌려주면 안 된다** — 그러면 정상 수렴과
+    구별되지 않아 호출자가 쓰레기를 믿는다.
     """
     V = _backend()
     n = len(b)
@@ -159,8 +166,10 @@ def cg(matvec, b, x0=None, tol=1e-10, maxiter=1000):
     for it in range(1, maxiter + 1):
         ap = V.asvec(matvec(p))
         pap = V.dot(p, ap)
-        if pap <= 0.0:          # 준정부호 방어 — 고정을 빠뜨리면 여기 걸린다
-            return x, it
+        if pap <= 0.0:
+            # 준정부호 붕괴. maxiter 를 돌려줘 실패 신호를 낸다 — it 을 돌려주면
+            # 정상 수렴과 구별되지 않는다.
+            return x, maxiter
         alpha = rs / pap
         x = V.axpy(alpha, p, x)
         r = V.axpy(-alpha, ap, r)
