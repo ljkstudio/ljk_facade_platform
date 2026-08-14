@@ -48,6 +48,12 @@
 ├── gh_components/               # Grasshopper 어댑터 + REST 브리지
 │   └── gh_scripts/              #   GhPython 컴포넌트에 붙여넣는 RunScript
 │
+├── unfold/                      # ★ 복곡면 블랭크 전개 (ARAP, 동작함)
+│   ├── src/                     #   topology / element / flatten / metrics / blank / pipeline
+│   ├── gh_scripts/              #   UFv1 Material · UFv1 Flatten 어댑터
+│   ├── tools/                   #   캔버스 반영 · 시험 하네스 · 프로파일러
+│   └── tests/                   #   pytest (Rhino 없이 돈다)
+│
 ├── api/                         # FastAPI — GH ↔ 대시보드 통신 백본
 ├── core/                        # 공용 타입·검증 (shared)
 ├── dashboard/                   # Vite + React + TypeScript
@@ -59,6 +65,7 @@
 | 영역 | 상태 |
 |---|---|
 | `adaptive_mold/src` | **동작함** — A~E 5단계 완성, RhinoCommon만 사용(numpy 불필요) |
+| `unfold/src` | **동작함** — 곡면 5종 실측 검증, GH 컴포넌트 둘. [`30_unfold_blank_v1.md`](30_unfold_blank_v1.md) |
 | `gh_components` | **동작함** — GhPython 컴포넌트 + 대시보드 파라미터 pull |
 | `api` | **부분** — `health`, `session`만. geometry 엔드포인트 없음 |
 | `core/shared` | **부분** — types, validation |
@@ -122,6 +129,7 @@ run_all()
 | [`10_api_rest_server.md`](10_api_rest_server.md) · [`11_api_schemas.md`](11_api_schemas.md) | REST 백본 |
 | [`12_dashboard_v1.md`](12_dashboard_v1.md) | 대시보드 |
 | [`20_gha_csharp_port.md`](20_gha_csharp_port.md) | **C# `.gha` 플러그인 포팅 계획** |
+| [`30_unfold_blank_v1.md`](30_unfold_blank_v1.md) | **복곡면 블랭크 전개 — `UFv1 Material` / `UFv1 Flatten` 사용 설명서** |
 | [`docs/journal/README.md`](docs/journal/README.md) | 개발 저널 기록 규약 — 다음 개발을 자동 생성하기 위한 재료 |
 | [`adaptive_mold/README.md`](adaptive_mold/README.md) | 역산기 입출력 사양 |
 | [`gh_components/README.md`](gh_components/README.md) | GH 컴포넌트 설치·배선 |
