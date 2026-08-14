@@ -90,6 +90,45 @@ def test_areas_are_reported_for_both_sides():
     assert m.area_2d == pytest.approx(m.area_3d, rel=1e-9)
 
 
+class _FakeElement(object):
+    def __init__(self, area):
+        self.area = area
+
+
+class _FakeResult(object):
+    """전부 뒤집힌 결과를 만들기 위한 최소 대역품.
+
+    가짜 동작을 검사하는 게 아니라, metrics 가 **읽는 값의 모양**만 갖춘 입력이다.
+    실제 전개로는 이 상태를 안정적으로 만들 수 없어서(정렬이 전역 거울상을 되돌린다)
+    직접 만든다.
+    """
+
+    def __init__(self, n):
+        self.sigmas = [(1.2, -0.8)] * n
+        self.elements = [_FakeElement(1.0) for _ in range(n)]
+        self.uv = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)]
+        self.faces = [(0, 1, 2)] * n
+        self.converged = True
+        self.iterations = 3
+        self.energy_history = [1.0, 0.5]
+
+
+def test_all_flipped_is_unjudged_not_passed():
+    """잰 요소가 하나도 없는데 '통과'라고 하면 안 된다 — 이 모듈의 존재 이유다.
+
+    빈 wrinkle·tear 목록을 통과로 읽으면 검사하지 않은 것을 괜찮다고 말하게 된다."""
+    props = mt.MaterialProps(elong_max=0.12, source="테스트")
+    m = mx.evaluate(_FakeResult(4), props)
+    assert status_of(m, "주름") == "미판정"
+    assert status_of(m, "찢어짐") == "미판정"
+    assert m.max_forming_strain is None
+    assert len(m.flip_faces) == 4
+    for name in ("주름", "찢어짐"):
+        detail = [d for n, _s, d in m.checks if n == name][0]
+        assert "뒤집" in detail
+        assert "inf" not in detail
+
+
 def test_non_convergence_is_a_warning_not_silence():
     verts, faces = meshes.sphere_cap(nr=5, nt=12)
     topo = tp.build(len(verts), faces)

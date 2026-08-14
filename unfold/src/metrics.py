@@ -39,11 +39,19 @@ def _tri_area_2d(uv, face):
 
 def evaluate(res, props):
     # type: (object, object) -> Metrics
-    """FlattenResult 를 판정으로 옮긴다."""
+    """FlattenResult 를 판정으로 옮긴다.
+
+    `max_forming_strain` 은 잰 요소가 하나도 없으면 **None** 이다(전부 뒤집힌 경우).
+    `sigma_min` 은 뒤집힌 요소의 음수 s2 를 포함하므로 음수가 나올 수 있다 — 그건
+    성형비가 아니라 뒤집힘의 표시이고, 실제 개수는 `flip_faces` 가 말한다.
+    `area_2d` 는 삼각형 면적의 **절댓값** 합이라 겹친 부분이 상쇄되지 않는다.
+    따라서 area_2d ≈ area_3d 를 접힘 없음의 증거로 쓰면 안 된다 — 그건 flip_faces 의 일이다.
+    """
     wrinkle, tear, flip = [], [], []
     s_min = float("inf")
     s_max = -float("inf")
     worst_strain = -float("inf")
+    counted = 0                              # 변형률을 실제로 잰 요소 수
 
     for t, (s1, s2) in enumerate(res.sigmas):
         s_max = max(s_max, s1)
@@ -51,6 +59,7 @@ def evaluate(res, props):
         if s2 < 0.0:
             flip.append(t)
             continue
+        counted += 1
         if s1 > 1.0 + WRINKLE_TOL:
             wrinkle.append(t)
         strain = forming_strain(s2)          # 가장 작은 σ 가 가장 큰 인장을 낳는다
@@ -63,28 +72,38 @@ def evaluate(res, props):
 
     checks = []
 
-    if wrinkle:
-        checks.append(("주름", "경고",
-                       "성형 중 압축되는 요소 %d개 (전체 %d개). 최대 σ = %.4f — "
-                       "판재는 압축을 받으면 주름진다"
-                       % (len(wrinkle), len(res.sigmas), s_max)))
+    if not counted:
+        # **잰 요소가 하나도 없다.** 이때 빈 wrinkle·tear 목록을 "통과"로 읽으면
+        # 이 모듈이 막으라고 만들어진 바로 그 실패가 된다 — 검사하지 않은 것을
+        # 괜찮다고 말하는 것. 게다가 worst_strain 이 -inf 로 남아 상세 문구에
+        # "-inf%" 가 찍힌다.
+        why = ("요소 %d개가 전부 뒤집혔다 — 변형률을 잴 수 있는 요소가 하나도 없다. "
+               "이 결과로는 주름도 찢어짐도 판정할 수 없다" % len(res.sigmas))
+        checks.append(("주름", "미판정", why))
+        checks.append(("찢어짐", "미판정", why))
     else:
-        checks.append(("주름", "통과",
-                       "모든 요소가 σ ≤ 1 이다 (최대 %.4f) — 성형이 인장만으로 이루어진다"
-                       % s_max))
+        if wrinkle:
+            checks.append(("주름", "경고",
+                           "성형 중 압축되는 요소 %d개 (전체 %d개). 최대 σ = %.4f — "
+                           "판재는 압축을 받으면 주름진다"
+                           % (len(wrinkle), len(res.sigmas), s_max)))
+        else:
+            checks.append(("주름", "통과",
+                           "모든 요소가 σ ≤ 1 이다 (최대 %.4f) — 성형이 인장만으로 이루어진다"
+                           % s_max))
 
-    if props.elong_max is None:
-        checks.append(("찢어짐", "미판정",
-                       "elong_max 가 없다. 성형 변형률 최대 %.2f%% 를 잰 것뿐이고 "
-                       "한계와 비교하지 않았다" % (worst_strain * 100.0)))
-    elif tear:
-        checks.append(("찢어짐", "경고",
-                       "연신 한계 %.1f%% 를 넘는 요소 %d개. 최대 %.2f%%"
-                       % (props.elong_max * 100.0, len(tear), worst_strain * 100.0)))
-    else:
-        checks.append(("찢어짐", "통과",
-                       "최대 성형 변형률 %.2f%% < 한계 %.1f%%"
-                       % (worst_strain * 100.0, props.elong_max * 100.0)))
+        if props.elong_max is None:
+            checks.append(("찢어짐", "미판정",
+                           "elong_max 가 없다. 성형 변형률 최대 %.2f%% 를 잰 것뿐이고 "
+                           "한계와 비교하지 않았다" % (worst_strain * 100.0)))
+        elif tear:
+            checks.append(("찢어짐", "경고",
+                           "연신 한계 %.1f%% 를 넘는 요소 %d개. 최대 %.2f%%"
+                           % (props.elong_max * 100.0, len(tear), worst_strain * 100.0)))
+        else:
+            checks.append(("찢어짐", "통과",
+                           "최대 성형 변형률 %.2f%% < 한계 %.1f%%"
+                           % (worst_strain * 100.0, props.elong_max * 100.0)))
 
     if flip:
         checks.append(("뒤집힘", "경고",
@@ -99,6 +118,7 @@ def evaluate(res, props):
         checks.append(("수렴", "경고",
                        "반복 상한 %d 에서 멈췄다 — 반복을 늘려야 한다" % res.iterations))
 
-    return Metrics(sigma_min=s_min, sigma_max=s_max, max_forming_strain=worst_strain,
+    return Metrics(sigma_min=s_min, sigma_max=s_max,
+                   max_forming_strain=(worst_strain if counted else None),
                    wrinkle_faces=wrinkle, tear_faces=tear, flip_faces=flip,
                    area_3d=area_3d, area_2d=area_2d, checks=checks)
