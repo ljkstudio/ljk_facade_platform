@@ -108,6 +108,49 @@ def test_build_notes_say_what_was_done():
     assert "12" in text and ("여유" in text or "오프셋" in text)
 
 
+SPIKE = [(0.0, 0.0), (100.0, 0.0), (50.0, 400.0)]     # 꼭짓점 2 의 내각 약 14.2도
+
+
+class _FakeTopo(object):
+    """boundary_loops 만 있는 최소 대역품. blank 는 그것만 읽는다."""
+
+    def __init__(self, loop):
+        self.boundary_loops = [loop]
+
+
+def test_a_sharp_corner_is_reported_because_the_offset_cannot_keep_its_promise():
+    """마이터 제한이 걸리면 오프셋 정점의 수직거리가 dist·denom/MITER_MIN 로 줄어
+    **약속한 거리보다 가까워진다.** 스파이크에서는 어떤 마이터/베벨로도 못 지킨다.
+
+    v1 은 기하를 고치지 않고 재서 알린다. 그러니 최소한 **알아채기는** 해야 한다."""
+    assert bk.sharp_corners(SPIKE) == [2]
+    assert bk.sharp_corners(SQUARE) == []      # 90도는 걸리지 않는다
+
+    dist = 10.0
+    curve = bk.offset(SPIKE, dist)
+    worst = min(bk.distance_to_polygon(p, curve) for p in SPIKE)
+    assert worst < dist - 1e-6, \
+        "제한이 걸렸는데 여유가 줄지 않았다 — 검사가 성립하지 않는다 (worst=%.4f)" % worst
+
+
+def test_build_says_out_loud_when_the_clearance_falls_short():
+    """보증이 깨지면 조용히 넘기지 않는다 — 이 모듈의 유일한 약속이다."""
+    b = bk.build(SPIKE, _FakeTopo(list(range(len(SPIKE)))), allow_mm=10.0, fit_tol=0.0)
+    text = " ".join(b.notes)
+    assert "뾰족한 꼭짓점" in text
+    assert "미달" in text
+    assert b.clearance_min < 10.0
+
+
+def test_a_blunt_shape_reports_neither_warning():
+    """경고가 아무 데서나 뜨면 아무도 안 본다."""
+    b = bk.build(SQUARE, _FakeTopo(list(range(len(SQUARE)))), allow_mm=10.0, fit_tol=0.0)
+    text = " ".join(b.notes)
+    assert "뾰족한 꼭짓점" not in text
+    assert "미달" not in text
+    assert b.clearance_min >= 10.0 - 1e-6
+
+
 def test_clearance_is_measured_against_the_worst_point_not_the_average():
     verts, faces = meshes.plane_grid()
     topo = tp.build(len(verts), faces)

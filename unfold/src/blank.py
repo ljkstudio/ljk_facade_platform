@@ -6,17 +6,32 @@
     ③ 오프셋 바깥으로 (allow_mm + fit_tol) → 자기교차 검사
 
 **보증**: 단순화가 안쪽으로 최대 fit_tol 파고들 수 있으므로 오프셋을 그만큼 더
-준다. 그러면 최종 곡선은 원 폴리라인 바깥으로 항상 allow_mm 이상 떨어져 있다.
+준다. 그러면 최종 곡선은 원 폴리라인 바깥으로 allow_mm 이상 떨어져 있다.
 재료를 조금 더 쓰는 대신 과소재단이 구조적으로 불가능해진다.
 
-**알려진 한계**: 오목 모서리에서 오프셋이 자기교차할 수 있다. v1 은 고치지 않고
+**보증이 성립하지 않는 단 하나의 경우 — 뾰족한 꼭짓점.** 마이터 제한이 걸리면
+(`denom < MITER_MIN`) 오프셋 정점의 실제 수직거리가 `dist · denom/MITER_MIN` 로
+줄어 **약속한 거리보다 가까워진다.** 뾰족해질수록 한없이 나빠진다 — 실측으로
+10mm 요구에 6.6mm 까지 떨어졌다(내각 14.2도).
+
+내각 α 에 대해 `b·n = sin(α/2)` 이므로 제한이 걸리는 조건은
+`α < 2·asin(MITER_MIN)` = **약 23.1도**다. 스파이크에서는 어떤 마이터/베벨로도
+거리를 지킬 수 없다(둥근 조인이어야 가능하다).
+
+v1 은 기하를 고치지 않고 **재서 알린다** — 자기교차를 다루는 방식과 같다.
+`build()` 가 `sharp_corners()` 로 그 꼭짓점을 세고, 실측 여유가 요구치에 미달하면
+`notes` 에 굵게 적는다. **조용히 깨지는 것만은 막는다.**
+
+**또 하나의 한계**: 오목 모서리에서 오프셋이 자기교차할 수 있다. v1 은 고치지 않고
 검출해서 알린다(spec §8.1). 외장 패널은 대개 볼록 사각형이라 드물다.
 """
 
 import math
 
-FEATURE_DEG = 30.0        # 꺾임각이 이보다 크면 코너로 본다
-MITER_MIN = 0.2           # 뾰족한 모서리에서 오프셋이 폭발하는 것을 막는다
+FEATURE_DEG = 30.0            # 꺾임각이 이보다 크면 코너로 본다
+MITER_MIN = 0.2               # 뾰족한 모서리에서 오프셋이 폭발하는 것을 막는다
+CLEARANCE_TOL = 1e-6          # 여유 미달 판정의 수치 여유 (mm)
+MIN_POLY_FOR_SIMPLIFY = 4     # 이보다 적으면 고정점 구간 논리가 성립하지 않는다
 EPS = 1e-12
 
 
@@ -88,7 +103,7 @@ def simplify(poly, features, tol):
     # type: (list, list, float) -> list
     """특징점을 고정한 채 그 사이 구간만 단순화한다."""
     n = len(poly)
-    if tol <= 0.0 or n < 4:
+    if tol <= 0.0 or n < MIN_POLY_FOR_SIMPLIFY:
         return list(poly)
     anchors = sorted(set(features))
     if len(anchors) < 2:
@@ -140,6 +155,38 @@ def offset(poly, dist):
     return out
 
 
+def sharp_angle_limit():
+    # type: () -> float
+    """마이터 제한이 걸리는 내각의 상한 (라디안). MITER_MIN=0.2 → 약 23.1도."""
+    return 2.0 * math.asin(min(1.0, MITER_MIN))
+
+
+def sharp_corners(poly):
+    # type: (list) -> list
+    """마이터 제한이 걸릴 만큼 뾰족한 꼭짓점의 인덱스.
+
+    **여기서는 오프셋이 약속한 거리를 지키지 못한다.** 내각 α 에 대해
+    `b·n = sin(α/2)` 이므로 제한 조건은 `sin(α/2) < MITER_MIN`, 즉
+    `α < 2·asin(MITER_MIN)` 이다.
+
+    꺾임각의 크기만 쓰므로 감김 방향과 무관하다. 오목한 스파이크도 같이 잡히는데,
+    그쪽은 자기교차 검사에도 걸린다.
+    """
+    n = len(poly)
+    limit = sharp_angle_limit()
+    out = []
+    for i in range(n):
+        p, q, r = poly[i - 1], poly[i], poly[(i + 1) % n]
+        ax, ay = q[0] - p[0], q[1] - p[1]
+        bx, by = r[0] - q[0], r[1] - q[1]
+        if math.hypot(ax, ay) < EPS or math.hypot(bx, by) < EPS:
+            continue
+        turn = abs(math.atan2(ax * by - ay * bx, ax * bx + ay * by))
+        if math.pi - turn < limit:
+            out.append(i)
+    return out
+
+
 def _seg_cross(a, b, c, d):
     def side(p, q, r):
         return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
@@ -164,7 +211,13 @@ def self_intersections(poly):
 
 def point_in_polygon(pt, poly):
     # type: (tuple, list) -> bool
-    """광선 투사. 경계 위의 점은 안쪽으로 친다."""
+    """광선 투사.
+
+    **경계 위의 점은 결과가 일정하지 않다** — 변의 방향에 따라 True 도 False 도 나온다
+    (실측: 정사각형에서 (0,0)·(50,0) 은 True, (100,50)·(50,100) 은 False).
+    광선 투사의 알려진 취약점이고 v1 은 보정하지 않는다. build() 는 오프셋으로 밀어낸
+    곡선에 대해 원 경계점을 검사하므로 점이 변 위에 정확히 놓이는 일이 없다.
+    """
     x, y = pt
     inside = False
     n = len(poly)
@@ -226,6 +279,12 @@ def build(uv, topo, allow_mm, fit_tol=1.0, feature_deg=FEATURE_DEG):
         notes.append("재단선이 %d군데에서 자기교차한다 — 오목 모서리다. "
                      "v1 은 고치지 않으니 손으로 확인해야 한다" % len(hits))
 
+    sharp = sharp_corners(simple)
+    if sharp:
+        notes.append("내각 %.1f도 미만인 뾰족한 꼭짓점 %d개 — 마이터 제한이 걸려 "
+                     "그 자리에서는 오프셋이 약속한 여유를 지키지 못한다"
+                     % (math.degrees(sharp_angle_limit()), len(sharp)))
+
     outside = [p for p in src if not point_in_polygon(p, curve)]
     if outside:
         notes.append("경계점 %d개가 재단선 **밖에** 있다 — 과소재단이다. "
@@ -234,6 +293,12 @@ def build(uv, topo, allow_mm, fit_tol=1.0, feature_deg=FEATURE_DEG):
     else:
         clearance = min(distance_to_polygon(p, curve) for p in src)
         notes.append("최소 여유 실측 %.3f mm" % clearance)
+        if clearance < allow_mm - CLEARANCE_TOL:
+            # 보증이 깨졌다. 조용히 넘기면 안 된다 — 이 모듈의 유일한 약속이다.
+            notes.append("**여유가 요구치에 미달한다 (%.3f < %.3f mm).** 뾰족한 꼭짓점에서 "
+                         "마이터 제한이 걸렸을 가능성이 크다(위 항목 참조). 재단선을 "
+                         "그대로 쓰면 그 자리가 과소재단이 된다"
+                         % (clearance, allow_mm))
 
     return BlankResult(curve=curve, source=src, features=feats,
                        clearance_min=clearance, intersections=hits, notes=notes)
