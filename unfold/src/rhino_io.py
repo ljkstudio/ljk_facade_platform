@@ -14,8 +14,12 @@ import math
 import Rhino.Geometry as rg
 import System.Drawing as sd
 
-MIN_EDGE_RATIO = 0.25     # 최소 변 길이 = edge_mm × 이것
-WELD_DEG = 180.0          # 정점 병합 각도
+MIN_EDGE_RATIO = 0.25         # 최소 변 길이 = edge_mm × 이것
+WELD_DEG = 180.0               # 정점 병합 각도
+MESH_DENSITY = 0.0             # MeshingParameters 밀도 — 변 길이로만 제어한다
+FULL_COLOR_STRAIN = 0.20       # σ 가 1 에서 이만큼 벗어나면 색이 만색이 된다
+COLOR_MAX = 255                # 채널 최대
+COLOR_SWING = 200              # 만색에서 다른 두 채널이 내려가는 폭
 
 
 def mesh_from_brep(brep, edge_mm):
@@ -25,7 +29,7 @@ def mesh_from_brep(brep, edge_mm):
     if brep is None:
         return [], [], ["Brep 이 None 이다"]
 
-    mp = rg.MeshingParameters(0.0)
+    mp = rg.MeshingParameters(MESH_DENSITY)
     mp.MaximumEdgeLength = float(edge_mm)
     mp.MinimumEdgeLength = float(edge_mm) * MIN_EDGE_RATIO
     mp.SimplePlanes = False
@@ -76,11 +80,12 @@ def to_mesh(uv, faces):
 
 def _sigma_color(s):
     """σ<1 (성형에서 인장) 은 파랑, 1 은 흰색, σ>1 (주름 위험) 은 빨강."""
-    t = max(-1.0, min(1.0, (s - 1.0) * 5.0))     # ±20% 를 만색으로
+    t = max(-1.0, min(1.0, (s - 1.0) / FULL_COLOR_STRAIN))
     if t >= 0.0:
-        return sd.Color.FromArgb(255, int(255 - 200 * t), int(255 - 200 * t))
-    u = -t
-    return sd.Color.FromArgb(int(255 - 200 * u), int(255 - 200 * u), 255)
+        v = int(COLOR_MAX - COLOR_SWING * t)
+        return sd.Color.FromArgb(COLOR_MAX, v, v)
+    v = int(COLOR_MAX - COLOR_SWING * (-t))
+    return sd.Color.FromArgb(v, v, COLOR_MAX)
 
 
 def to_strain_mesh(uv, faces, sigmas):

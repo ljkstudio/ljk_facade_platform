@@ -32,6 +32,11 @@ fails = [0]
 
 SPHERE_RADIUS_MM = 2000.0      # 브리핑대로: 반지름 2000
 PATCH_DOMAIN_FRACTION = 0.20   # 구 파라미터 도메인 가운데 20% 만 남긴다 (열린 트림 경계 확보)
+EDGE_MM = 60.0                 # mesh_from_brep 목표 변 길이
+ELONG_MAX = 0.12               # 검사용 물성의 성형 한계 변형률
+ALLOW_MM = 15.0                # pl.run 인자와 단언 임계값이 **같은 상수**여야 한다
+MAX_VERTS = 20000               # pl.run 정점 상한 (검사 메쉬가 이 아래에 있어야 한다)
+BOX_EDGE_MM = 300.0              # 여러 조각 스티칭 검사용 박스 한 변
 
 
 def check(name, cond, detail=""):
@@ -59,15 +64,15 @@ try:
     patch = srf.Trim(u_range, v_range)
     brep = rg.Brep.CreateFromSurface(patch) if patch is not None else None
 
-    verts, faces, notes = rio.mesh_from_brep(brep, 60.0)
+    verts, faces, notes = rio.mesh_from_brep(brep, EDGE_MM)
     lines.extend("    " + n for n in notes)
     check("메쉬화", len(verts) > 50 and len(faces) > 50,
           "정점 %d 면 %d" % (len(verts), len(faces)))
     check("삼각형만", all(len(f) == 3 for f in faces))
 
-    out = pl.run(verts, faces, mt.MaterialProps(name="검사용", elong_max=0.12,
+    out = pl.run(verts, faces, mt.MaterialProps(name="검사용", elong_max=ELONG_MAX,
                                                 source="검사 스크립트"),
-                 allow_mm=15.0, max_verts=20000)
+                 allow_mm=ALLOW_MM, max_verts=MAX_VERTS)
     lines.append("    ok=%s" % out.ok)
     lines.extend("    " + w for w in out.warn)
     check("파이프라인", out.ok)
@@ -84,8 +89,27 @@ try:
         check("재단 면적 > 평면 메쉬 면적",
               amp is not None and amp.Area > out.metrics.area_2d,
               "재단 %.1f vs 평면 %.1f" % (amp.Area if amp else -1, out.metrics.area_2d))
-        check("최소 여유가 요구치 이상", out.blank.clearance_min >= 15.0 - 1e-6,
+        check("최소 여유가 요구치 이상", out.blank.clearance_min >= ALLOW_MM - 1e-6,
               "%.3f mm" % out.blank.clearance_min)
+
+    # --- Finding 3: 나머지 두 함정도 재현 가능하게 검사한다 ---
+
+    # (a) None Brep 가드
+    v0, f0, n0 = rio.mesh_from_brep(None, EDGE_MM)
+    check("None Brep 가드", v0 == [] and f0 == [] and len(n0) == 1,
+          "notes=%r" % (n0,))
+
+    # (b) 여러 조각 스티칭 — 박스는 면 6개로 나뉘어 메쉬화되므로 Append +
+    # CombineIdentical + Weld 가 실제로 발동하는 조건이다. 파이프라인은 닫힌
+    # 박스(경계 없음)를 거부할 것이므로 mesh_from_brep 만 직접 검사한다.
+    box_brep = rg.Box(rg.Plane.WorldXY, rg.Interval(0, BOX_EDGE_MM),
+                      rg.Interval(0, BOX_EDGE_MM), rg.Interval(0, BOX_EDGE_MM)).ToBrep()
+    bv, bf, bn = rio.mesh_from_brep(box_brep, EDGE_MM)
+    joined = " ".join(bn)
+    check("여러 조각 합치기", "나뉘어" in joined, joined)
+    check("합친 뒤 꿰맴 — 정점이 조각별로 중복되지 않는다",
+          0 < len(bv) < 6 * len(bf), "정점 %d 면 %d" % (len(bv), len(bf)))
+    check("박스도 삼각형만", all(len(x) == 3 for x in bf))
 except Exception:
     lines.append("EXCEPTION")
     lines.append(traceback.format_exc())
