@@ -67,8 +67,12 @@ def optimize_surface(target_srf, grid_pts, base_plane, width, length,
 
     valid_distances = [d for d in raw_distances if d is not None]
     if len(valid_distances) < 3:
-        add_warning(component, "Not enough in-bounds points for optimization ({})".format(
-            len(valid_distances)))
+        add_warning(component,
+                    u"곡면 위에 놓인 격자점이 {}개다 (정렬에 최소 3개 필요). "
+                    u"Phase B 정렬을 건너뛰었고 모든 핀 높이가 외삽값이다. "
+                    u"base_plane 의 원점은 몰드의 모서리다 — 곡면이 "
+                    u"X [0, {:g}] · Y [0, {:g}] 밖에 있는지 확인할 것."
+                    .format(len(valid_distances), width, length))
         positioned = safe_duplicate_brep(brep, "target_srf")
         if len(valid_distances) > 0:
             target_h = (min_height + max_height) / 2.0
@@ -158,7 +162,7 @@ def optimize_surface(target_srf, grid_pts, base_plane, width, length,
     positioned.Transform(trans_xform)
 
     opt_info = "tilt={:.1f}deg, dz={:.1f}mm".format(tilt_angle, delta_z)
-    add_remark(component, "Surface optimized: {}".format(opt_info))
+    add_remark(component, u"Phase B 정렬 완료 — {}.".format(opt_info))
 
     return (positioned, opt_info, OPT_FULL)
 

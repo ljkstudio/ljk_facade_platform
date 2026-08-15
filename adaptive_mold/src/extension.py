@@ -50,9 +50,20 @@ def extend_surface(positioned_srf, width, length, component=None):
         branch: 탄 가지 (EXT_* 상수). 골든 픽스처 대조용 진단이며
             계산에는 쓰이지 않는다.
     """
+    # get_surface_from_input 은 첫 face만 쓰는데 component 를 받지 않아
+    # 조용히 나머지를 버린다. 호출부인 여기서 경고한다.
+    brep_in = get_brep_from_input(positioned_srf)
+    if brep_in is not None and brep_in.Faces.Count > 1:
+        add_warning(component,
+                    u"target_srf 의 face 가 {} 개다. 곡면 확장(Phase C)은 첫 face "
+                    u"만 쓰므로 결과가 나머지 face 를 반영하지 않는다. 단일 face 로 "
+                    u"합치거나 face 마다 따로 돌릴 것.".format(brep_in.Faces.Count))
+
     srf = get_surface_from_input(positioned_srf)
     if srf is None:
-        add_warning(component, "Surface extension: could not extract surface")
+        add_warning(component,
+                    u"positioned_srf 에서 Surface 를 얻지 못해 곡면 확장을 "
+                    u"건너뛰었다. 몰드 밖 핀은 전부 접평면 외삽값이 된다.")
         brep = get_brep_from_input(positioned_srf)
         return (brep, EXTENSION_METHOD_TANGENT, EXT_NO_SURFACE)
 
@@ -69,13 +80,16 @@ def extend_surface(positioned_srf, width, length, component=None):
         if extended is not None and extended is not srf:
             brep = extended.ToBrep()
             if brep is not None:
-                add_remark(component, "Surface extended via Surface.Extend()")
+                add_remark(component, u"Phase C 확장 완료 — Surface.Extend 를 썼다.")
                 return (brep, EXTENSION_METHOD_SURFACE, EXT_SURFACE_EXTEND)
 
     except Exception:
         pass
 
-    add_warning(component, "Surface.Extend() failed, using tangent fallback")
+    # Warning 이 아니라 Remark 다. 흔하게 뜨는 경고는 경고 무시를 학습시킨다.
+    add_remark(component,
+               u"곡면 확장에 Surface.Extend 를 쓰지 못해 접평면 외삽으로 "
+               u"대체했다. 몰드 안쪽(extension_flags=False) 핀은 영향이 없다.")
     brep = get_brep_from_input(positioned_srf)
     return (brep, EXTENSION_METHOD_TANGENT, EXT_TANGENT_FALLBACK)
 

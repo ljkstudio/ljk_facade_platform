@@ -102,6 +102,7 @@ def run_adaptive_mold(target_srf, base_plane=None,
 
     if not compute:
         result.info = "Compute is disabled. Set compute=True to run."
+        add_remark(component, u"compute 가 꺼져 있다. 계산하려면 Boolean Toggle 을 True 로.")
         return result
 
     # --- 입력 검증 ---
@@ -115,17 +116,20 @@ def run_adaptive_mold(target_srf, base_plane=None,
     min_height = validate_non_negative_float(min_height, "min_height", 0.0)
 
     if min_height >= max_height:
-        add_error(component, "min_height ({}) must be < max_height ({})".format(
-            min_height, max_height))
+        add_error(component,
+                  u"min_height ({}) 가 max_height ({}) 보다 크거나 같다. "
+                  u"계산하지 않았다. 두 값을 확인할 것.".format(min_height, max_height))
         return result
 
     if target_srf is None:
-        add_error(component, "target_srf is required.")
+        add_error(component, u"target_srf 가 비어 있다. Surface 또는 Brep 을 물릴 것.")
         return result
 
     target_brep = get_brep_from_input(target_srf)
     if target_brep is None:
-        add_error(component, "target_srf is invalid.")
+        add_error(component,
+                  u"target_srf 에서 Brep 을 얻지 못했다. Surface 또는 Brep 을 물릴 것 "
+                  u"(Mesh·Curve·Point 는 받지 않는다).")
         return result
 
     # --- Phase A: Grid Generation ---
@@ -138,6 +142,15 @@ def run_adaptive_mold(target_srf, base_plane=None,
     result.grid_pts = grid_pts
     total_pins = nx * ny
 
+    # spacing 이 몰드 크기를 나누지 못하면 가장자리가 비는데 지금까지 조용했다.
+    rem_x = width - (nx - 1) * spacing
+    rem_y = length - (ny - 1) * spacing
+    if rem_x > 1e-9 or rem_y > 1e-9:
+        add_remark(component,
+                   u"spacing {:g} 이 몰드 크기를 나누지 못한다. 핀은 X 방향 {:g}mm, "
+                   u"Y 방향 {:g}mm 까지만 덮는다 (나머지 {:g}/{:g}mm 는 비어 있다)."
+                   .format(spacing, (nx - 1) * spacing, (ny - 1) * spacing, rem_x, rem_y))
+
     # --- Phase B: Surface Optimization ---
     positioned_srf, opt_info, opt_branch = optimize_surface(
         target_brep, grid_pts, base_plane, width, length,
@@ -146,7 +159,9 @@ def run_adaptive_mold(target_srf, base_plane=None,
     result.opt_branch = opt_branch
 
     if positioned_srf is None:
-        add_error(component, "Surface optimization failed.")
+        add_error(component,
+                  u"Phase B 정렬이 실패했다 (DuplicateBrep 실패). "
+                  u"곡면이 유효한지 확인할 것.")
         return result
 
     result.positioned_srf = positioned_srf
@@ -169,6 +184,15 @@ def run_adaptive_mold(target_srf, base_plane=None,
     result.pin_heights = pin_heights
     result.clamp_flags = clamp_flags
     result.extension_flags = extension_flags
+
+    # 클램핑은 "목표 곡면을 재현 못 한다"는 뜻인데 지금까지 캔버스는 초록이었다.
+    n_clamped = sum(1 for c in clamp_flags if c)
+    if n_clamped > 0:
+        add_warning(component,
+                    u"핀 {}/{} 개가 행정 한계에 걸렸다. 그 지점은 목표 곡면을 "
+                    u"재현하지 못한다. clamp_flags 로 위치를 확인하고, "
+                    u"max_height 를 늘리거나 곡면을 완만하게 할 것."
+                    .format(n_clamped, total_pins))
 
     # --- Phase E: 3D Model Transformation ---
     if housing_model is not None or rod_model is not None or top_model is not None:
@@ -196,7 +220,7 @@ def run_adaptive_mold(target_srf, base_plane=None,
         pin_heights, clamp_flags, extension_flags, total_pins
     )
 
-    add_remark(component, "AdaptiveMold v1 computed successfully.")
+    add_remark(component, u"AdaptiveMold v1 계산 완료. 핀 {}개.".format(total_pins))
     return result
 
 

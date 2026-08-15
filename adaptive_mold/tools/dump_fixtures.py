@@ -286,6 +286,24 @@ def _as_text(s):
     return s
 
 
+class _MessageCollector(object):
+    """`utils.add_*` 가 부르는 GhPython 컴포넌트 흉내.
+
+    픽스처는 지금까지 component=None 으로 뽑혀 메시지가 한 줄도 없었다.
+    '검증 가능하다'와 '정답지가 있다'는 다르다.
+
+    level 은 Grasshopper 의 GH_RuntimeMessageLevel 열거형이고, str() 하면
+    "Warning"/"Error"/"Remark" 가 나온다. C# 쪽 MoldMessageLevel 과 이
+    문자열로 대조한다.
+    """
+
+    def __init__(self):
+        self.messages = []
+
+    def AddRuntimeMessage(self, level, text):
+        self.messages.append([str(level), text])
+
+
 def run_case(case):
     """케이스 하나를 실행해 비교 가능한 dict를 돌려준다."""
     params = dict(DEFAULT_PARAMS)
@@ -299,6 +317,8 @@ def run_case(case):
     fingerprint = geometry_fingerprint(surface)
     plane_fp = plane_fingerprint(base_plane)
 
+    collector = _MessageCollector()
+
     r = run_adaptive_mold(
         surface,
         base_plane=base_plane,
@@ -308,6 +328,7 @@ def run_case(case):
         max_height=params["max_height"],
         min_height=params["min_height"],
         compute=True,
+        component=collector,
     )
 
     return {
@@ -317,6 +338,7 @@ def run_case(case):
         "branch_taken": list(r.branch_taken),
         "opt_branch": r.opt_branch,
         "ext_branch": r.ext_branch,
+        "messages": collector.messages,
         "pin_tops": [[float(p.X), float(p.Y), float(p.Z)] for p in r.pin_tops],
         "grid_pts": [[float(p.X), float(p.Y), float(p.Z)] for p in r.grid_pts],
         "info": r.info,
@@ -343,7 +365,7 @@ def compare(a, b):
     # Phase B·C 가지와 중간 지문도 재현성 검사 대상이다 —
     # 실행마다 흔들리면 정답지가 될 수 없다.
     for key in ("opt_branch", "ext_branch",
-                "positioned_fingerprint", "extended_fingerprint"):
+                "positioned_fingerprint", "extended_fingerprint", "messages"):
         if a[key] != b[key]:
             return "{}: {!r} vs {!r}".format(key, a[key], b[key])
     return None
@@ -413,6 +435,7 @@ def main():
                 "ext_branch": first["ext_branch"],
                 "positioned_fingerprint": first["positioned_fingerprint"],
                 "extended_fingerprint": first["extended_fingerprint"],
+                "messages": first["messages"],
                 "pin_tops": first["pin_tops"],
                 "grid_pts": first["grid_pts"],
             },

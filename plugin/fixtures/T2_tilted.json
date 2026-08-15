@@ -227,6 +227,20 @@
       "cv_u": 2,
       "cv_v": 2
     },
+    "messages": [
+      [
+        "Remark",
+        "Phase B \uc815\ub82c \uc644\ub8cc \u2014 tilt=10.0deg, dz=-83.8mm."
+      ],
+      [
+        "Remark",
+        "Phase C \ud655\uc7a5 \uc644\ub8cc \u2014 Surface.Extend \ub97c \uc37c\ub2e4."
+      ],
+      [
+        "Remark",
+        "AdaptiveMold v1 \uacc4\uc0b0 \uc644\ub8cc. \ud540 36\uac1c."
+      ]
+    ],
     "pin_tops": [
       [
         0.0,

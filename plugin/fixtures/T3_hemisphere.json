@@ -226,6 +226,24 @@
       "cv_u": 9,
       "cv_v": 5
     },
+    "messages": [
+      [
+        "Remark",
+        "Phase B \uc815\ub82c \uc644\ub8cc \u2014 tilt=0.0deg, dz=-88.0mm."
+      ],
+      [
+        "Remark",
+        "Phase C \ud655\uc7a5 \uc644\ub8cc \u2014 Surface.Extend \ub97c \uc37c\ub2e4."
+      ],
+      [
+        "Warning",
+        "\ud540 20/36 \uac1c\uac00 \ud589\uc815 \ud55c\uacc4\uc5d0 \uac78\ub838\ub2e4. \uadf8 \uc9c0\uc810\uc740 \ubaa9\ud45c \uace1\uba74\uc744 \uc7ac\ud604\ud558\uc9c0 \ubabb\ud55c\ub2e4. clamp_flags \ub85c \uc704\uce58\ub97c \ud655\uc778\ud558\uace0, max_height \ub97c \ub298\ub9ac\uac70\ub098 \uace1\uba74\uc744 \uc644\ub9cc\ud558\uac8c \ud560 \uac83."
+      ],
+      [
+        "Remark",
+        "AdaptiveMold v1 \uacc4\uc0b0 \uc644\ub8cc. \ud540 36\uac1c."
+      ]
+    ],
     "pin_tops": [
       [
         0.0,
