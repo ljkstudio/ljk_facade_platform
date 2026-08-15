@@ -13,9 +13,12 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
-    <PackageReference Include="NUnit" Version="4.2.2" />
-    <PackageReference Include="NUnit.Analyzers" Version="4.4.0" />
-    <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
+    <!-- Rhino.Testing 8.0.28-beta 가 NUnit 3.14.0 에 묶여 있다. 4.x 를 쓰면
+         [RhinoTestFixture] 가 다른 NUnit 어셈블리의 속성이 되어 discovery 가
+         **조용히** 건너뛴다 — 테스트가 사라지는데 러너는 통과라고 보고한다. -->
+    <PackageReference Include="NUnit" Version="3.14.0" />
+        <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
+        <PackageReference Include="NUnitLite" Version="3.14.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -26,10 +29,8 @@
        검사할 수 없다 — 쓰지 않는 참조는 컴파일러가 매니페스트에서 지우므로
        규약 위반이 있어도 없어도 똑같이 보인다. -->
   <ItemGroup>
-    <AssemblyMetadata Include="CoreCsprojPath"
-                      Value="$(MSBuildThisFileDirectory)..\AdaptiveMold.Core\AdaptiveMold.Core.csproj" />
-    <AssemblyMetadata Include="GhCsprojPath"
-                      Value="$(MSBuildThisFileDirectory)..\AdaptiveMold.GH\AdaptiveMold.GH.csproj" />
+    <AssemblyMetadata Include="CoreCsprojPath" Value="$(MSBuildThisFileDirectory)..\AdaptiveMold.Core\AdaptiveMold.Core.csproj" />
+    <AssemblyMetadata Include="GhCsprojPath" Value="$(MSBuildThisFileDirectory)..\AdaptiveMold.GH\AdaptiveMold.GH.csproj" />
   </ItemGroup>
 
   <!-- 골든 픽스처를 출력 폴더로. 테스트가 TestContext.CurrentContext.TestDirectory
