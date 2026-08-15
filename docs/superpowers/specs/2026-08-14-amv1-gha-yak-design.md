@@ -225,10 +225,10 @@ docs/params.ko.json          ← 정본
 |---|---|---|
 | 파라미터 툴팁 | 첫 줄은 단독 성립(무엇+단위+기본값), 함정은 아래 줄. 평문(마크다운 금지) | `params.ko.json` → C# |
 | 컴포넌트 설명 | 4단계 요약 + 단위 + 인덱싱 규약 + "플래그가 켜진 핀은 계산은 됐지만 믿을 수 없다" | C# 생성자 |
-| 우클릭 메뉴 | `예제 파일 열기` · `매뉴얼 열기` · `진단 텍스트 복사` | `AppendAdditionalComponentMenuItems`. **경로는 `Grasshopper.Instances.ComponentServer.FindAssembly(id).Location` 으로 얻는다 — `Assembly.Location` 은 금지** (COFF 메모리 로딩이 켜진 사용자에게는 빈 문자열이라, 어떤 PC 에서는 되고 어떤 PC 에서는 안 되는 재현 불가 버그가 된다) |
+| 우클릭 메뉴 | `예제 파일 열기` · `매뉴얼 열기` · `진단 텍스트 복사` — **필수다.** F1 이 죽어 있어(J-015 FACT-09) 이것이 매뉴얼·예제에 닿는 유일한 통로다 | `AppendAdditionalComponentMenuItems`. **경로는 `Grasshopper.Instances.ComponentServer.FindAssembly(id).Location` 으로 얻는다 — `Assembly.Location` 은 금지** (COFF 메모리 로딩이 켜진 사용자에게는 빈 문자열이라, 어떤 PC 에서는 되고 어떤 PC 에서는 안 되는 재현 불가 버그가 된다) |
 | 예제 `.gh` 4개 | 아래 | 패키지 `examples/` |
 | 매뉴얼 | 정본 저장소 `docs/manual/`(md), 배포본은 패키지 안 html. **사내 위키는 링크만** — 위키는 버전이 없어 설치본과 어긋나면 없느니만 못하다 | 둘 다 |
-| 런타임 메시지 | §3.6 | 코드 |
+| 런타임 메시지 | §3.6. **유일한 push 채널** — 나머지는 전부 사용자가 찾아 들어가야 읽는다(J-015 FACT-09). 문제가 났을 때 화면으로 밀어줄 수 있는 것은 이것뿐이다 | 코드 |
 
 **예제 4개는 골든 픽스처와 같은 입력으로 만든다** — 장식이 아니라 검사 대상이 된다(§5.4).
 
