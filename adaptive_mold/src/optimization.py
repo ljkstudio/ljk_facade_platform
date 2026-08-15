@@ -15,9 +15,26 @@ from utils import (
 )
 
 
+# ──────────────────────────────────────
+# Phase B 가지 식별자 (골든 픽스처 대조용)
+#
+# projection.py 의 BRANCH_* 와 같은 목적이다. 어느 경로로 정렬했는지가
+# 출력에 남지 않아, C# 포팅본이 다른 가지를 타도 숫자가 비슷하면 모른다.
+# 값은 C# 포팅본과 문자열까지 일치해야 한다.
+# ──────────────────────────────────────
+
+OPT_INVALID_SURFACE = "invalid_surface"   # Brep 추출 실패
+OPT_TRANSLATE_ONLY = "translate_only"     # 유효점 < 3, 평행이동만
+OPT_NO_POINTS = "no_points"               # 유효점 0, 아무것도 안 함
+OPT_FIT_NONE = "fit_none"                 # FitPlaneToPoints 가 None
+OPT_FIT_FAILED = "fit_failed"             # fit 실패 → 평행이동만
+OPT_DUP_FAILED = "dup_failed"             # DuplicateBrep 실패
+OPT_FULL = "full"                         # 회전 + 평행이동 (정상 경로)
+
+
 def optimize_surface(target_srf, grid_pts, base_plane, width, length,
                      min_height, max_height, component=None):
-    # type: (...) -> tuple[rg.Brep | None, str]
+    # type: (...) -> tuple[rg.Brep | None, str, str]
     """목표 곡면을 stroke 범위 안에 맞도록 최적 위치로 정렬합니다.
 
     1. 각 grid_pt에서 법선 방향으로 ray → target_srf 교점까지 거리 측정
@@ -36,13 +53,15 @@ def optimize_surface(target_srf, grid_pts, base_plane, width, length,
         component: GhPython 컴포넌트 인스턴스.
 
     Returns:
-        (positioned_srf, opt_info) 튜플.
+        (positioned_srf, opt_info, branch) 튜플.
         positioned_srf: 최적화된 곡면 (Brep).
         opt_info: 최적화 정보 문자열.
+        branch: 탄 가지 (OPT_* 상수). 골든 픽스처 대조용 진단이며
+            계산에는 쓰이지 않는다.
     """
     brep = get_brep_from_input(target_srf)
     if brep is None:
-        return (None, "optimization skipped: invalid surface")
+        return (None, "optimization skipped: invalid surface", OPT_INVALID_SURFACE)
 
     raw_distances, sample_pts = _measure_distances(grid_pts, base_plane, brep)
 
@@ -58,14 +77,14 @@ def optimize_surface(target_srf, grid_pts, base_plane, width, length,
             trans = rg.Transform.Translation(base_plane.ZAxis * delta_z)
             positioned.Transform(trans)
             return (positioned, "translate only (dz={:.1f}mm, {} pts)".format(
-                delta_z, len(valid_distances)))
-        return (positioned, "no optimization (0 in-bounds points)")
+                delta_z, len(valid_distances)), OPT_TRANSLATE_ONLY)
+        return (positioned, "no optimization (0 in-bounds points)", OPT_NO_POINTS)
 
     # best-fit plane
     fit_result = rg.Plane.FitPlaneToPoints(sample_pts)
     if fit_result is None or (hasattr(fit_result, '__len__') and len(fit_result) < 2):
         positioned = safe_duplicate_brep(brep, "target_srf")
-        return (positioned, "plane fit failed, no optimization")
+        return (positioned, "plane fit failed, no optimization", OPT_FIT_NONE)
 
     if hasattr(fit_result, '__len__'):
         fit_ok = fit_result[0] == rg.PlaneFitResult.Success
@@ -81,12 +100,13 @@ def optimize_surface(target_srf, grid_pts, base_plane, width, length,
         delta_z = target_h - avg_d
         trans = rg.Transform.Translation(base_plane.ZAxis * delta_z)
         positioned.Transform(trans)
-        return (positioned, "plane fit failed, translate only (dz={:.1f}mm)".format(delta_z))
+        return (positioned, "plane fit failed, translate only (dz={:.1f}mm)".format(delta_z),
+                OPT_FIT_FAILED)
 
     # 회전: fit_plane.Normal → (0,0,1) in local space
     positioned = safe_duplicate_brep(brep, "target_srf")
     if positioned is None:
-        return (None, "DuplicateBrep failed")
+        return (None, "DuplicateBrep failed", OPT_DUP_FAILED)
 
     current_normal = fit_plane.Normal
     target_normal = rg.Vector3d.ZAxis
@@ -140,7 +160,7 @@ def optimize_surface(target_srf, grid_pts, base_plane, width, length,
     opt_info = "tilt={:.1f}deg, dz={:.1f}mm".format(tilt_angle, delta_z)
     add_remark(component, "Surface optimized: {}".format(opt_info))
 
-    return (positioned, opt_info)
+    return (positioned, opt_info, OPT_FULL)
 
 
 def _measure_distances(grid_pts, base_plane, brep):

@@ -22,9 +22,10 @@ def _make_nurbs_surface(size=600.0, z_height=200.0):
 def test_extend_surface_basic():
     """기본 surface extend 동작."""
     srf = _make_nurbs_surface(600.0, 200.0)
-    result, method = extend_surface(srf, 1000.0, 1000.0)
+    result, method, branch = extend_surface(srf, 1000.0, 1000.0)
     assert result is not None, "Extended surface should not be None"
     assert method in [EXTENSION_METHOD_SURFACE, EXTENSION_METHOD_TANGENT]
+    assert branch, "branch should be set"
     print("PASS: test_extend_surface_basic (method: {})".format(method))
 
 

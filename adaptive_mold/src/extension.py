@@ -17,8 +17,21 @@ EXTENSION_METHOD_SURFACE = "surface_extend"
 EXTENSION_METHOD_TANGENT = "tangent_fallback"
 
 
+# ──────────────────────────────────────
+# Phase C 가지 식별자 (골든 픽스처 대조용)
+#
+# method 는 Phase D 의 분기가 쓰는 계산 입력이라 손대지 않는다. 대신
+# "왜 그 method 가 됐는지"를 따로 남긴다 — no_surface 와 tangent_fallback
+# 은 둘 다 method="tangent_fallback" 이라 method 만으로는 구별되지 않는다.
+# ──────────────────────────────────────
+
+EXT_NO_SURFACE = "no_surface"               # get_surface_from_input 실패
+EXT_SURFACE_EXTEND = "surface_extend"       # Surface.Extend 성공
+EXT_TANGENT_FALLBACK = "tangent_fallback"   # 실패 → 접평면 외삽
+
+
 def extend_surface(positioned_srf, width, length, component=None):
-    # type: (rg.Brep | rg.Surface, float, float, object) -> tuple[rg.Brep | rg.Surface | None, str]
+    # type: (rg.Brep | rg.Surface, float, float, object) -> tuple[rg.Brep | rg.Surface | None, str, str]
     """positioned_srf를 mold 전체 영역으로 확장합니다.
 
     우선 Surface.Extend()를 UV 양방향으로 시도합니다.
@@ -31,15 +44,17 @@ def extend_surface(positioned_srf, width, length, component=None):
         component: GhPython 컴포넌트 인스턴스.
 
     Returns:
-        (extended_srf, method) 튜플.
+        (extended_srf, method, branch) 튜플.
         extended_srf: 확장된 곡면.
         method: 사용된 확장 방식 ("surface_extend" 또는 "tangent_fallback").
+        branch: 탄 가지 (EXT_* 상수). 골든 픽스처 대조용 진단이며
+            계산에는 쓰이지 않는다.
     """
     srf = get_surface_from_input(positioned_srf)
     if srf is None:
         add_warning(component, "Surface extension: could not extract surface")
         brep = get_brep_from_input(positioned_srf)
-        return (brep, EXTENSION_METHOD_TANGENT)
+        return (brep, EXTENSION_METHOD_TANGENT, EXT_NO_SURFACE)
 
     extension_length = max(width, length) * 1.5
 
@@ -55,14 +70,14 @@ def extend_surface(positioned_srf, width, length, component=None):
             brep = extended.ToBrep()
             if brep is not None:
                 add_remark(component, "Surface extended via Surface.Extend()")
-                return (brep, EXTENSION_METHOD_SURFACE)
+                return (brep, EXTENSION_METHOD_SURFACE, EXT_SURFACE_EXTEND)
 
     except Exception:
         pass
 
     add_warning(component, "Surface.Extend() failed, using tangent fallback")
     brep = get_brep_from_input(positioned_srf)
-    return (brep, EXTENSION_METHOD_TANGENT)
+    return (brep, EXTENSION_METHOD_TANGENT, EXT_TANGENT_FALLBACK)
 
 
 def _try_extend(surface, iso_status, length):

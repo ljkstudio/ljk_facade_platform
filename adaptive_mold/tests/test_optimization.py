@@ -36,7 +36,7 @@ def test_flat_surface_no_rotation():
     base = rg.Plane.WorldXY
     pts, nx, ny = build_grid(base, 1000.0, 1000.0, 200.0)
 
-    positioned, info = optimize_surface(target, pts, base, 1000.0, 1000.0, 0.0, 400.0)
+    positioned, info, branch = optimize_surface(target, pts, base, 1000.0, 1000.0, 0.0, 400.0)
 
     assert positioned is not None, "positioned should not be None"
     assert "tilt" in info or "translate" in info, "Info: {}".format(info)
@@ -49,7 +49,7 @@ def test_tilted_surface_rotation():
     base = rg.Plane.WorldXY
     pts, nx, ny = build_grid(base, 1000.0, 1000.0, 200.0)
 
-    positioned, info = optimize_surface(target, pts, base, 1000.0, 1000.0, 0.0, 400.0)
+    positioned, info, branch = optimize_surface(target, pts, base, 1000.0, 1000.0, 0.0, 400.0)
 
     assert positioned is not None
     assert "tilt" in info, "Should have tilt info: {}".format(info)
@@ -62,7 +62,7 @@ def test_optimization_centers_height():
     base = rg.Plane.WorldXY
     pts, nx, ny = build_grid(base, 1000.0, 1000.0, 200.0)
 
-    positioned, info = optimize_surface(target, pts, base, 1000.0, 1000.0, 0.0, 400.0)
+    positioned, info, branch = optimize_surface(target, pts, base, 1000.0, 1000.0, 0.0, 400.0)
 
     assert positioned is not None
     print("PASS: test_optimization_centers_height (info: {})".format(info))

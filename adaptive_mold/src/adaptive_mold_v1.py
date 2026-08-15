@@ -63,6 +63,10 @@ class AdaptiveMoldResult(object):
         # 핀별로 탄 폴백 가지 (projection.BRANCH_*). 골든 픽스처 대조용 진단이며
         # ghpython_run의 반환 튜플에는 포함되지 않는다.
         self.branch_taken = []
+        # Phase B·C가 탄 가지 (optimization.OPT_* / extension.EXT_*).
+        # branch_taken이 Phase D만 덮고 있어 B·C의 선택은 대조 대상이 아니었다.
+        self.opt_branch = ""
+        self.ext_branch = ""
 
 
 def run_adaptive_mold(target_srf, base_plane=None,
@@ -135,10 +139,11 @@ def run_adaptive_mold(target_srf, base_plane=None,
     total_pins = nx * ny
 
     # --- Phase B: Surface Optimization ---
-    positioned_srf, opt_info = optimize_surface(
+    positioned_srf, opt_info, opt_branch = optimize_surface(
         target_brep, grid_pts, base_plane, width, length,
         min_height, max_height, component
     )
+    result.opt_branch = opt_branch
 
     if positioned_srf is None:
         add_error(component, "Surface optimization failed.")
@@ -147,11 +152,12 @@ def run_adaptive_mold(target_srf, base_plane=None,
     result.positioned_srf = positioned_srf
 
     # --- Phase C: Surface Extension ---
-    extended_srf, ext_method = extend_surface(
+    extended_srf, ext_method, ext_branch = extend_surface(
         positioned_srf, width, length, component
     )
 
     result.extended_srf = extended_srf
+    result.ext_branch = ext_branch
 
     # --- Phase D: Height Calculation ---
     pin_heights, clamp_flags, extension_flags = calculate_heights(

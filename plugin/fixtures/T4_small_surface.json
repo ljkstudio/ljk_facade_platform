@@ -188,6 +188,8 @@
       "ray+/ext",
       "ray+/ext"
     ],
+    "opt_branch": "full",
+    "ext_branch": "surface_extend",
     "pin_tops": [
       [
         0.0,

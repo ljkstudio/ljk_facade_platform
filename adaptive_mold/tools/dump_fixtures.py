@@ -315,6 +315,8 @@ def run_case(case):
         "clamp_flags": [bool(c) for c in r.clamp_flags],
         "extension_flags": [bool(e) for e in r.extension_flags],
         "branch_taken": list(r.branch_taken),
+        "opt_branch": r.opt_branch,
+        "ext_branch": r.ext_branch,
         "pin_tops": [[float(p.X), float(p.Y), float(p.Z)] for p in r.pin_tops],
         "grid_pts": [[float(p.X), float(p.Y), float(p.Z)] for p in r.grid_pts],
         "info": r.info,
@@ -332,6 +334,10 @@ def compare(a, b):
         for i, (x, y) in enumerate(zip(va, vb)):
             if x != y:
                 return "{}[{}]: {!r} vs {!r}".format(key, i, x, y)
+    # Phase B·C 가지도 재현성 검사 대상이다 — 실행마다 흔들리면 정답지가 될 수 없다.
+    for key in ("opt_branch", "ext_branch"):
+        if a[key] != b[key]:
+            return "{}: {!r} vs {!r}".format(key, a[key], b[key])
     return None
 
 
@@ -395,6 +401,8 @@ def main():
                 "clamp_flags": first["clamp_flags"],
                 "extension_flags": first["extension_flags"],
                 "branch_taken": first["branch_taken"],
+                "opt_branch": first["opt_branch"],
+                "ext_branch": first["ext_branch"],
                 "pin_tops": first["pin_tops"],
                 "grid_pts": first["grid_pts"],
             },
