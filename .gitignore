@@ -60,3 +60,6 @@ plugin/**/bin-testhost/
 *.suo
 .vs/
 *.yak
+
+# 픽스처 불변 검사의 기준 사본 (재생성 가능, 로컬 전용)
+plugin/fixtures/_baseline/
