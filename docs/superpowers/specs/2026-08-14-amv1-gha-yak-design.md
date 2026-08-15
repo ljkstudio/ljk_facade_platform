@@ -307,9 +307,20 @@ C# 테스트는 이 빌더를 재구현해야 하는데, 어긋나면 **Core 가
 
 → 가짜 component 로 수집해 `expected.messages: [[level, text], …]` 를 픽스처에 추가한다. §3.6 의 신규 4개가 여기서 검증된다.
 
-### 5.4 러너 — 반나절 타임박스, 그다음 `.rhp`
+### 5.4 러너 — **확정: Rhino 안에서 NUnitLite** (2026-08-15)
 
-**1순위 `Rhino.Testing`** (McNeel, MIT, `github.com/mcneel/Rhino.Testing`). 확인된 요건:
+> **이 절의 나머지는 그 결정에 이르는 근거다.** 실행은
+> `python adaptive_mold/tools/run_csharp_tests.py` 하나. 전제는 Rhino 8 이 떠 있고
+> 명령창에 `mcpstart` 를 친 것. 결과는 26/26 통과(계약 4 + 패키징 5 + 기하 1 + 지문 16).
+>
+> **`Rhino.Testing` 은 기각했고 `.rhp` 테스트 호스트는 만들지 않았다.** 상세는
+> J-015 DECISION-01. 요약: `Rhino.Testing` 은 `[RhinoTestFixture]` 가 discovery 에서
+> **조용히 사라지고**(테스트 개수가 줄어드는데 러너는 "통과"라고 보고한다),
+> NUnit 을 3.14 로 맞춰도 그대로였다. Rhino 안에서 `AutoRun(asm).Execute(args)` 를
+> 부르면 그냥 된다 — RhinoCommon 이 이미 로드돼 있고 같은 AppDomain 이다.
+> 테스트 코드는 `[RhinoTestFixture]` 를 쓰지 않으므로 어느 러너에도 묶여 있지 않다.
+
+**1순위였던 `Rhino.Testing`** (McNeel, MIT, `github.com/mcneel/Rhino.Testing`). 확인된 요건:
 
 | 항목 | 사실 |
 |---|---|
@@ -388,7 +399,7 @@ Core 모듈마다 **픽스처에서 뽑은 케이스로 실패하는 테스트�
 | 항목 | 값 |
 |---|---|
 | id | `ljks-adaptive-mold` (글자·숫자·하이픈·언더스코어만. **최초 업로드의 대소문자가 영구 고정**). **`yak spec` 이 만드는 값을 그대로 쓰면 안 된다** — 이름을 `GH_AssemblyInfo.Name` 에서 유도하며 공백을 하이픈으로 바꾼다(J-015 TRAP-01). `AdaptiveMoldInfo.Name` 이 `"LJKS AdaptiveMold"` 이므로 `LJKS-AdaptiveMold` 가 나온다 |
-| 배포 태그 | **`rh8_0-win` — 단, `yak build --platform win` 을 줘야 한다.** 실측(J-015 FACT-02): 플래그 없이 빌드하면 TFM 이 `net7.0-windows` 여도 `rh8_0-**any**` 가 나온다. Rhino 버전 반쪽만 어셈블리에서 유도되고 플랫폼은 별개이며, 버전 반쪽은 재정의 불가(RH-80951 — 공식 우회는 파일명 개명) |
+| 배포 태그 | **`rh8_0-win` (실측 확정).** 두 가지가 동시에 맞아야 나온다 — ① `yak build --platform win` (플래그 없으면 TFM 이 `net7.0-windows` 여도 `-any`) ② NuGet 을 `8.0.23304.9001` 로 고정 (`8.*` 면 `rh8_34` 가 되고 **Grasshopper 가 조용히 등록을 거부한다**, J-015 TRAP-03). **파일명의 태그가 곧 진단이다** — `rh8_0-win` 이 아니면 잘못 빌드된 것 |
 | 매니페스트 필수 | `name` · `version` · `authors` · `description`. 권장 `url` · `keywords`(**검색 대상**) · `icon`(PNG/JPEG 64×64). `icon_url` 은 폐기됨 |
 | 내용물 | `AdaptiveMold.GH.gha` · `AdaptiveMold.Core.dll` · `examples/*.gh` · `docs/manual.html` · 아이콘 — **`.gha`·`manifest.yml` 은 최상위 필수**, 나머지 하위 폴더는 보존된다 |
 | 타겟 | `net7.0-windows` (지시서 §3.1) |
@@ -417,7 +428,7 @@ Core 모듈마다 **픽스처에서 뽑은 케이스로 실패하는 테스트�
 | | 내용 | 끝났다고 말할 수 있는 조건 |
 |---|---|---|
 | **M2a-0** | 스크래치 `.gha`(M0 산출물) + 빈 매니페스트로 **사내 폴더 소스 인식만** 스모크. 저장소 무변경. 배포 태그 실제 파일명 확인 | 로컬 폴더를 소스로 등록하니 패키지 매니저에 뜨고 설치된다 |
-| **M2a** | `plugin/` 솔루션 골격 + 빈 컴포넌트(툴팁 1·우클릭 1) + **`TestSurfaceBuilder` + 픽스처 지문** + 러너 확정(반나절 타임박스 → `.rhp` 폴백) | 컴포넌트가 뜨고 툴팁이 보이고, **C# 이 만든 지오메트리가 파이썬 지문과 일치**하며, 러너가 픽스처 하나를 끝까지 돌린다. **F1 도움말이 서드파티 컴포넌트에서 무엇을 보여주는지 확정**(현재 미확인) |
+| ~~**M2a**~~ | ~~솔루션 골격 + 빈 컴포넌트 + `TestSurfaceBuilder` + 픽스처 지문 + 러너 확정~~ | **완료 (2026-08-15, J-015).** 26/26 통과, 지문 16개 일치. 남은 것: F1 도움말 동작 확인(사람 눈 필요) |
 | **M2b** | 파이썬 선반영(신규 메시지 4 · `optBranch`/`extBranch` · T9) → 픽스처 재생성 → **`expected` 6배열 불변 확인** → Core 포팅 A→D→B→C | 각 모듈이 파이썬과 같은 값을 낸다 |
 | **M3** | 어댑터 배선 + T1~T9 대조 + 툴팁·메시지·예제 4개·매뉴얼 + 자동검사 5개 | §8 완료조건 |
 | **M4** *(다음 슬라이스)* | `AMv1 Inspect` 의 A~D 호출을 `.gha` 로 교체 → **`platform_path` 제거**. 역산/표시 경계 확정 | 이 문서 밖 |
