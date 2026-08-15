@@ -23,6 +23,14 @@ import os
 import shutil
 import sys
 
+# Windows 한국어 로캘의 콘솔 기본 인코딩은 cp949 라 em dash(U+2014)에서 죽는다.
+# 게이트 도구가 출력 한 줄 때문에 죽으면 검사 결과를 못 본다 — 실제로 T9 를
+# 추가했을 때 [NEW] 경로에서 그렇게 됐다.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 FIXTURES = os.path.join(REPO, "plugin", "fixtures")
 BASELINE = os.path.join(FIXTURES, "_baseline")
