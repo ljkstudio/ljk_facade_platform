@@ -7,6 +7,8 @@
     <Nullable>disable</Nullable>
     <IsPackable>false</IsPackable>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- 이유는 AdaptiveMold.Core.csproj 주석 참조 -->
+    <NoWarn>NU1701</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -26,6 +28,8 @@
   <ItemGroup>
     <AssemblyMetadata Include="CoreCsprojPath"
                       Value="$(MSBuildThisFileDirectory)..\AdaptiveMold.Core\AdaptiveMold.Core.csproj" />
+    <AssemblyMetadata Include="GhCsprojPath"
+                      Value="$(MSBuildThisFileDirectory)..\AdaptiveMold.GH\AdaptiveMold.GH.csproj" />
   </ItemGroup>
 
   <!-- 골든 픽스처를 출력 폴더로. 테스트가 TestContext.CurrentContext.TestDirectory

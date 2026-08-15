@@ -28,7 +28,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Grasshopper" Version="8.*" ExcludeAssets="runtime" />
+    <!-- 버전 고정 이유는 AdaptiveMold.Core.csproj 주석 참조. `8.*` 는 금물. -->
+    <PackageReference Include="Grasshopper" Version="8.0.23304.9001" ExcludeAssets="runtime" />
   </ItemGroup>
 
   <ItemGroup>

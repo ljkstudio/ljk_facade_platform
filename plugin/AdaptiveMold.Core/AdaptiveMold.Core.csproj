@@ -9,6 +9,14 @@
     <!-- 없으면 NuGet DLL 이 출력에 복사되지 않아 의존성 빠진 .gha 가 나온다 -->
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <RootNamespace>AdaptiveMold.Core</RootNamespace>
+    <!-- NU1701: RhinoCommon 8.0 패키지에는 net48 자산만 있어(net7.0 자산은 8.32
+         부터) net7.0-windows 프로젝트가 net48 참조 어셈블리로 컴파일된다.
+         의도한 것이다 — 8.32 로 올리면 패키지가 Rhino 8.32+ 전용이 되는데,
+         우리가 쓰는 API(RayShoot·ClosestPoint·Surface.Extend·FitPlaneToPoints)는
+         전부 오래된 안정 API 라 올릴 이유가 없다. 8.0 핀으로 빌드한 .gha 가
+         Rhino 8.33 에서 로드되는 것은 M0(J-001)에서 실증됐다.
+         템플릿도 같은 이유로 이 경고를 덮는다. -->
+    <NoWarn>NU1701</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -17,7 +25,11 @@
 
          ExcludeAssets=runtime : RhinoCommon 은 Rhino 가 이미 로드해 두었다.
          출력에 복사하면 버전이 갈려 이상한 방식으로 깨진다. -->
-    <PackageReference Include="RhinoCommon" Version="8.*" ExcludeAssets="runtime" />
+    <!-- 버전을 고정한다. `8.*` 를 쓰면 NuGet 이 최신(8.34)을 끌어오는데,
+         설치된 Rhino 가 8.33 이면 **자기보다 높은 API 로 빌드된 플러그인**이
+         되어 Grasshopper 가 조용히 등록을 거부한다(J-015 TRAP-03).
+         플러그인은 지원하는 가장 낮은 API 로 빌드한다 = Rhino 8.0 기준선. -->
+    <PackageReference Include="RhinoCommon" Version="8.0.23304.9001" ExcludeAssets="runtime" />
   </ItemGroup>
 
 </Project>
