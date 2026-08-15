@@ -133,6 +133,12 @@ def _probe_stage(ctx, name):
 alc.Resolving += _probe_stage
 
 alc.LoadFromAssemblyPath(r"{core}")
+# GH 어댑터도 **명시적으로** 올린다. Resolving 에 맡기면 안 된다 —
+# Resolving 은 기본 ALC 가 실패한 뒤에야 불리는데, 캔버스가 열리면 GH 가
+# **설치된 패키지의 같은 이름 어셈블리**를 기본 ALC 에 올려 두므로 테스트가
+# 방금 빌드한 것이 아니라 **설치본(낡은 껍데기)** 에 붙는다. 확장자가 .gha 인
+# 것도 함정이다 — 폴더 탐색은 .dll 만 보므로 어차피 못 찾는다.
+alc.LoadFromAssemblyPath(r"{gha}")
 alc.LoadFromAssemblyPath(r"{nunit}")
 litasm  = alc.LoadFromAssemblyPath(r"{lite}")
 testasm = alc.LoadFromAssemblyPath(r"{dll}")
@@ -152,6 +158,7 @@ print("rc=" + str(rc))
         tag=os.path.basename(stage),
         stage=_posix(stage),
         core=_posix(os.path.join(stage, "AdaptiveMold.Core.dll")),
+        gha=_posix(os.path.join(stage, "AdaptiveMold.GH.gha")),
         nunit=_posix(os.path.join(stage, "nunit.framework.dll")),
         dll=_posix(os.path.join(stage, "AdaptiveMold.Tests.dll")),
         lite=_posix(os.path.join(stage, "nunitlite.dll")),
@@ -164,6 +171,20 @@ print("rc=" + str(rc))
     except Exception as e:
         print("[실패] 브리지에 붙지 못했다: {}".format(e))
         print("       Rhino 8 을 띄우고 명령창에 mcpstart 를 칠 것.")
+        return 2
+
+    # M3 부터 테스트가 Grasshopper 타입을 쓴다. GH 플러그인이 로드돼 있지
+    # 않으면 기본 ALC 에 Grasshopper.dll 이 없어 테스트가 통째로 사라지는데,
+    # NUnit 은 "발견된 테스트 0개"를 초록으로 보고한다 — 가장 위험한 실패다.
+    probe = rhino.py(
+        "import Rhino, System\n"
+        "gh = Rhino.PlugIns.PlugIn.GetPlugInInfo("
+        "System.Guid('b45a29b1-4343-4035-989e-044e8580d9cf'))\n"
+        "print('GH_LOADED=' + str(gh is not None and gh.IsLoaded))")
+    if "GH_LOADED=True" not in str(probe):
+        print("[실패] Grasshopper 가 로드돼 있지 않다.")
+        print("       Rhino 명령창에 Grasshopper 를 입력해 캔버스를 한 번 띄울 것.")
+        rhino.close()
         return 2
 
     out = rhino.py(code)

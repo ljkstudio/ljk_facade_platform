@@ -19,10 +19,15 @@
     <PackageReference Include="NUnit" Version="3.14.0" />
         <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
         <PackageReference Include="NUnitLite" Version="3.14.0" />
+    <!-- 어댑터 계약 검사(자동검사 1·2)가 GH_Component 를 만든다.
+         ExcludeAssets=runtime — Rhino 가 이미 로드해 둔 것을 쓴다.
+         그래서 이 테스트들은 **GH 캔버스가 한 번 떠 있어야** 돈다. -->
+    <PackageReference Include="Grasshopper" Version="8.0.23304.9001" ExcludeAssets="runtime" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\AdaptiveMold.Core\AdaptiveMold.Core.csproj" />
+    <ProjectReference Include="..\AdaptiveMold.GH\AdaptiveMold.GH.csproj" />
   </ItemGroup>
 
   <!-- 계약 테스트가 Core 의 '프로젝트 파일'을 읽어야 한다. 컴파일된 어셈블리로는
