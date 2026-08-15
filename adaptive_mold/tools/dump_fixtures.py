@@ -107,6 +107,25 @@ def _make_hemisphere(radius=400.0, center_z=0.0):
     return sphere.ToBrep()
 
 
+def _make_saddle(amplitude=600.0, size=2000.0, z_base=200.0):
+    """쌍곡포물면. 진폭이 커서 정렬 후에도 가장자리가 그리드 아래로 내려간다.
+
+    ray- 가지(역법선 레이캐스트)를 태우기 위한 케이스다. T1~T8 은 그 가지를
+    한 번도 타지 않아 완료조건 4가 절반 빈 검사였다.
+    """
+    half = size / 2.0
+    pts = []
+    n = 5
+    for i in range(n):
+        for j in range(n):
+            u = -half + size * i / (n - 1.0)
+            v = -half + size * j / (n - 1.0)
+            z = z_base + amplitude * (u * v) / (half * half)
+            pts.append(rg.Point3d(500.0 + u, 500.0 + v, z))
+    srf = rg.NurbsSurface.CreateThroughPoints(pts, n, n, 3, 3, False, False)
+    return srf
+
+
 def _make_rotated_plane():
     origin = rg.Point3d(500, 300, 100)
     x_axis = rg.Vector3d(1, 1, 0)
@@ -125,6 +144,8 @@ def build_surface(spec):
         return _make_tilted_surface(spec["tilt_degrees"], spec["z_base"], spec["size"])
     if kind == "hemisphere":
         return _make_hemisphere(spec["radius"], spec["center_z"])
+    if kind == "saddle":
+        return _make_saddle(spec["amplitude"], spec["size"], spec["z_base"])
     raise ValueError("unknown surface kind: {}".format(kind))
 
 
@@ -255,6 +276,14 @@ CASES = [
         "surface": {"kind": "flat", "z_height": 200.0, "size": 4000.0},
         "base_plane": None,
         "params": {"width": 2000.0, "length": 2000.0, "spacing": 200.0},
+    },
+    {
+        "case": "T9_deep_saddle",
+        "note": "deep hyperbolic paraboloid - edges dip below grid after Phase B, "
+                "exercises ray- branch which T1~T8 never touch",
+        "surface": {"kind": "saddle", "amplitude": 1200.0, "size": 2000.0, "z_base": 200.0},
+        "base_plane": None,
+        "params": {},
     },
 ]
 

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text.Json;
 using Rhino.Geometry;
 
@@ -36,6 +37,11 @@ namespace AdaptiveMold.Tests
                     return MakeHemisphere(
                         spec.GetProperty("radius").GetDouble(),
                         spec.GetProperty("center_z").GetDouble());
+                case "saddle":
+                    return MakeSaddle(
+                        spec.GetProperty("amplitude").GetDouble(),
+                        spec.GetProperty("size").GetDouble(),
+                        spec.GetProperty("z_base").GetDouble());
                 default:
                     throw new ArgumentException("unknown surface kind: " + kind);
             }
@@ -76,6 +82,24 @@ namespace AdaptiveMold.Tests
         {
             var center = new Point3d(500, 500, centerZ);
             return new Sphere(center, radius).ToBrep();
+        }
+
+        // _make_saddle — 제어점 격자를 그대로 옮긴다. 순서가 다르면 곡면이 달라진다.
+        static Brep MakeSaddle(double amplitude, double size, double zBase)
+        {
+            double half = size / 2.0;
+            const int n = 5;
+            var pts = new List<Point3d>();
+            for (int i = 0; i < n; i++)
+                for (int j = 0; j < n; j++)
+                {
+                    double u = -half + size * i / (n - 1.0);
+                    double v = -half + size * j / (n - 1.0);
+                    double z = zBase + amplitude * (u * v) / (half * half);
+                    pts.Add(new Point3d(500.0 + u, 500.0 + v, z));
+                }
+            var srf = NurbsSurface.CreateThroughPoints(pts, n, n, 3, 3, false, false);
+            return srf.ToBrep();
         }
 
         // _make_rotated_plane
