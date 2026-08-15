@@ -1,17 +1,22 @@
 using System;
+using System.Diagnostics;
 using System.Drawing;
 using Grasshopper.Kernel;
+using Rhino.Geometry;
+using AdaptiveMold.Core;
 
 namespace AdaptiveMold.GH
 {
     /// <summary>
     /// 목표 곡면 → 핀 높이 역산 (Phase A~D).
     ///
-    /// M2a 현재는 **껍데기**다 — 로드·툴팁·중단점을 확인하기 위한 최소 형태이고,
-    /// 입력 8 / 출력 8 과 실제 계산은 M3 에서 채운다.
+    /// 이 클래스는 어댑터일 뿐이다 — 계산은 전부
+    /// <see cref="MoldSolver"/> 안에 있고 여기서는 GH 타입으로 펴기만 한다.
+    /// 계약(입력 정규화·min>=max 에러·compute=false 빈 결과·pin_tops 산식)을
+    /// 여기로 끌어오면 골든 픽스처 대조가 닿지 않는 곳이 생긴다(설계 §3.2).
     ///
     /// 이름이 `AdaptiveMold Pins` 가 아니라 `AMv1 Pins` 인 이유: 기존 컴포넌트
-    /// 7개가 전부 `AMv1 *` 이고 툴팁 레지스트리(param_docs)의 키도 그 형식이다.
+    /// 7개가 전부 `AMv1 *` 이고 툴팁 레지스트리의 키도 그 형식이다.
     /// </summary>
     public class AMv1PinsComponent : GH_Component
     {
@@ -30,42 +35,120 @@ namespace AdaptiveMold.GH
         public override Guid ComponentGuid =>
             new Guid("b4e07d92-1f38-4c6a-8e51-3a9c6d2b7f40");
 
-        protected override Bitmap Icon => null;   // M3
+        protected override Bitmap Icon => null;   // Task 6
 
         public override GH_Exposure Exposure => GH_Exposure.primary;
 
         protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
         {
-            // M3 에서 8개로 채운다. 지금은 로드 확인용 하나.
+            pManager.AddBrepParameter("target_srf", "target_srf",
+                ParamDocs.In("target_srf"), GH_ParamAccess.item);
+            pManager.AddPlaneParameter("base_plane", "base_plane",
+                ParamDocs.In("base_plane"), GH_ParamAccess.item, Plane.WorldXY);
+            pManager.AddNumberParameter("width", "width",
+                ParamDocs.In("width"), GH_ParamAccess.item, 1000.0);
+            pManager.AddNumberParameter("length", "length",
+                ParamDocs.In("length"), GH_ParamAccess.item, 1000.0);
+            pManager.AddNumberParameter("spacing", "spacing",
+                ParamDocs.In("spacing"), GH_ParamAccess.item, 200.0);
+            pManager.AddNumberParameter("max_height", "max_height",
+                ParamDocs.In("max_height"), GH_ParamAccess.item, 400.0);
+            pManager.AddNumberParameter("min_height", "min_height",
+                ParamDocs.In("min_height"), GH_ParamAccess.item, 0.0);
             pManager.AddBooleanParameter("compute", "compute",
-                "계산 실행 여부. 기본 false.\n"
-                + "무거운 계산이 슬라이더를 만질 때마다 돌지 않게 한다.\n"
-                + "Boolean Toggle 을 물려 True 로 바꿀 것.",
-                GH_ParamAccess.item, false);
+                ParamDocs.In("compute"), GH_ParamAccess.item, false);
+
+            // target_srf 를 선택으로 둔다. 필수로 두면 비었을 때 GH 가 자기
+            // 영어 경고를 내고 SolveInstance 를 아예 안 부르는데, 그러면
+            // MoldSolver 가 설계한 한국어 Error 도 compute=false Remark 도
+            // 화면에 못 간다. 검증은 Core 가 한다.
+            pManager[0].Optional = true;
+
+            // GH 기본값을 utils.py 와 같은 수치로 둔다. 다르게 두면 GH 에서
+            // 비운 경우와 파이썬에서 비운 경우가 갈린다(설계 §3.5).
         }
 
         protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
         {
+            pManager.AddNumberParameter("pin_heights", "pin_heights",
+                ParamDocs.Out("pin_heights"), GH_ParamAccess.list);
+            pManager.AddPointParameter("pin_tops", "pin_tops",
+                ParamDocs.Out("pin_tops"), GH_ParamAccess.list);
+            pManager.AddPointParameter("grid_pts", "grid_pts",
+                ParamDocs.Out("grid_pts"), GH_ParamAccess.list);
+            pManager.AddBooleanParameter("clamp_flags", "clamp_flags",
+                ParamDocs.Out("clamp_flags"), GH_ParamAccess.list);
+            pManager.AddBooleanParameter("extension_flags", "extension_flags",
+                ParamDocs.Out("extension_flags"), GH_ParamAccess.list);
             pManager.AddTextParameter("info", "info",
-                "통계 리포트. Panel 에 물릴 것.\n"
-                + "먼저 볼 줄은 Coverage 다 — 곡면 위 핀이 0 이면 "
-                + "나머지 숫자는 의미가 없다.",
-                GH_ParamAccess.item);
+                ParamDocs.Out("info"), GH_ParamAccess.item);
+            pManager.AddIntegerParameter("nx", "nx",
+                ParamDocs.Out("nx"), GH_ParamAccess.item);
+            pManager.AddIntegerParameter("ny", "ny",
+                ParamDocs.Out("ny"), GH_ParamAccess.item);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
         {
+            Brep target = null;
+            var basePlane = Plane.WorldXY;
+            double width = 1000.0, length = 1000.0, spacing = 200.0;
+            double maxHeight = 400.0, minHeight = 0.0;
             bool compute = false;
-            if (!DA.GetData(0, ref compute)) return;
 
-            // 이 세 줄이 로드 확인 · 런타임 경로 확인 · 중단점 대상을 한꺼번에
-            // 해결한다 (J-001 PROCEDURE-01). ".NET 8.x" 로 보고하면 netcore,
-            // ".NET Framework 4.8.x" 면 netfx 로 로드된 것이다.
-            var runtime = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription;
-            var rhino = Rhino.RhinoApp.Version.ToString();
-            var core = AdaptiveMold.Core.CoreInfo.Name;
+            // 반환값을 보지 않는다 — 선택 입력이 비면 false 를 돌려주는데
+            // 그때 위의 기본값이 그대로 남아야 한다.
+            DA.GetData(0, ref target);
+            DA.GetData(1, ref basePlane);
+            DA.GetData(2, ref width);
+            DA.GetData(3, ref length);
+            DA.GetData(4, ref spacing);
+            DA.GetData(5, ref maxHeight);
+            DA.GetData(6, ref minHeight);
+            DA.GetData(7, ref compute);
 
-            DA.SetData(0, $"OK | {runtime} | Rhino {rhino} | {core} | compute={compute}");
+            var sw = Stopwatch.StartNew();
+            var r = MoldSolver.Run(target, basePlane, width, length, spacing,
+                                   maxHeight, minHeight, compute);
+            sw.Stop();
+
+            // Core 는 메시지를 던지지 않고 모아서 돌려준다(설계 §3.1 규약 5).
+            // 여기가 그 유일한 번역 지점이다.
+            foreach (var m in r.Messages)
+                AddRuntimeMessage(ToLevel(m.Level), m.Text);
+
+            DA.SetDataList(0, r.PinHeights);
+            DA.SetDataList(1, r.PinTops);
+            DA.SetDataList(2, r.GridPts);
+            DA.SetDataList(3, r.ClampFlags);
+            DA.SetDataList(4, r.ExtensionFlags);
+            DA.SetData(5, WithElapsed(r, sw.Elapsed.TotalMilliseconds));
+            DA.SetData(6, r.Nx);
+            DA.SetData(7, r.Ny);
+        }
+
+        static GH_RuntimeMessageLevel ToLevel(MoldMessageLevel level)
+        {
+            switch (level)
+            {
+                case MoldMessageLevel.Error: return GH_RuntimeMessageLevel.Error;
+                case MoldMessageLevel.Warning: return GH_RuntimeMessageLevel.Warning;
+                default: return GH_RuntimeMessageLevel.Remark;
+            }
+        }
+
+        /// <summary>
+        /// 완료조건 5의 뒷부분 — <c>info</c> 가 경과 ms 를 보고한다.
+        ///
+        /// 어댑터에서 붙인다. Core 에 넣으면 리포트 문자열이 실행마다
+        /// 달라져 픽스처 대조에 쓸 수 없게 된다(지금도 info 는 대조 대상이
+        /// 아니지만, 비결정 값을 Core 에 들이지 않는다는 선은 지킨다).
+        /// 계산이 안 돈 경로(compute=false·검증 실패)에는 붙이지 않는다.
+        /// </summary>
+        static string WithElapsed(MoldResult r, double ms)
+        {
+            if (r.PinHeights.Count == 0) return r.Info;
+            return r.Info + $"\nElapsed:     {ms:F0} ms";
         }
     }
 }
