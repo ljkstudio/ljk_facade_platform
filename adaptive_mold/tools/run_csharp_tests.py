@@ -94,9 +94,25 @@ def main():
 
     code = """
 import System, io, os
+from System.Runtime.Loader import AssemblyLoadContext
 NL = os.linesep
-testasm = System.Reflection.Assembly.LoadFrom(r"{dll}")
-litasm  = System.Reflection.Assembly.LoadFrom(r"{lite}")
+
+# 한 Rhino 세션에서 **두 번째** 실행이
+# 'Assembly with same name is already loaded' 로 죽었다.
+# Assembly.LoadFrom 은 기본 ALC 에 넣는데 거기엔 지난 실행의 동명 어셈블리가
+# 이미 있다(.NET Core 로더는 .NET Framework 와 달리 이것을 거부한다).
+# 복사본을 태우는 것은 **원본 잠금**만 푼다 — 이름 충돌은 그대로다.
+#
+# 그래서 실행마다 새 ALC 를 만들고 우리 어셈블리만 거기에 직접 올린다.
+# RhinoCommon 은 올리지 않는다 — 기본 ALC 의 것(Rhino 가 이미 로드한 것)으로
+# 떨어져야 Point3d 같은 타입이 같아진다. ALC 는 자기 목록을 먼저 보므로
+# 테스트 어셈블리는 여기 올린 **새** Core 에 붙는다 (기본 ALC 에 남아 있는
+# 지난 실행의 낡은 Core 가 아니라).
+alc = AssemblyLoadContext(r"{tag}", True)
+alc.LoadFromAssemblyPath(r"{core}")
+alc.LoadFromAssemblyPath(r"{nunit}")
+litasm  = alc.LoadFromAssemblyPath(r"{lite}")
+testasm = alc.LoadFromAssemblyPath(r"{dll}")
 t = litasm.GetType("NUnitLite.AutoRun")
 runner = System.Activator.CreateInstance(t, System.Array[System.Object]([testasm]))
 # Execute(String[]) 오버로드만 쓴다. 3인자 오버로드는 ExtendedTextWriter 를
@@ -110,6 +126,9 @@ finally:
     f.close()
 print("rc=" + str(rc))
 """.format(
+        tag=os.path.basename(stage),
+        core=_posix(os.path.join(stage, "AdaptiveMold.Core.dll")),
+        nunit=_posix(os.path.join(stage, "nunit.framework.dll")),
         dll=_posix(os.path.join(stage, "AdaptiveMold.Tests.dll")),
         lite=_posix(os.path.join(stage, "nunitlite.dll")),
         res=_posix(result_xml),
