@@ -190,6 +190,42 @@
     ],
     "opt_branch": "full",
     "ext_branch": "surface_extend",
+    "positioned_fingerprint": {
+      "bbox_min": [
+        -1500.0,
+        -1500.0,
+        100.0
+      ],
+      "bbox_max": [
+        1500.0,
+        1500.0,
+        100.0
+      ],
+      "area": 9000000.0,
+      "face_count": 1,
+      "degree_u": 1,
+      "degree_v": 1,
+      "cv_u": 2,
+      "cv_v": 2
+    },
+    "extended_fingerprint": {
+      "bbox_min": [
+        -3000.0,
+        -3000.0,
+        100.0
+      ],
+      "bbox_max": [
+        3000.0,
+        3000.0,
+        100.0
+      ],
+      "area": 36000000.0,
+      "face_count": 1,
+      "degree_u": 1,
+      "degree_v": 1,
+      "cv_u": 2,
+      "cv_v": 2
+    },
     "pin_tops": [
       [
         0.0,

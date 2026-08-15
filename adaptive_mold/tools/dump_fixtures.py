@@ -322,6 +322,12 @@ def run_case(case):
         "info": r.info,
         "fingerprint": fingerprint,
         "plane_fingerprint": plane_fp,
+        # Phase B·C의 중간 산출물 지문. 없으면 Phase D 대조가 깨졌을 때
+        # B·C·D 중 어디가 문제인지 이분할 수 없다.
+        "positioned_fingerprint": (geometry_fingerprint(r.positioned_srf)
+                                   if r.positioned_srf is not None else None),
+        "extended_fingerprint": (geometry_fingerprint(r.extended_srf)
+                                 if r.extended_srf is not None else None),
     }
 
 
@@ -334,8 +340,10 @@ def compare(a, b):
         for i, (x, y) in enumerate(zip(va, vb)):
             if x != y:
                 return "{}[{}]: {!r} vs {!r}".format(key, i, x, y)
-    # Phase B·C 가지도 재현성 검사 대상이다 — 실행마다 흔들리면 정답지가 될 수 없다.
-    for key in ("opt_branch", "ext_branch"):
+    # Phase B·C 가지와 중간 지문도 재현성 검사 대상이다 —
+    # 실행마다 흔들리면 정답지가 될 수 없다.
+    for key in ("opt_branch", "ext_branch",
+                "positioned_fingerprint", "extended_fingerprint"):
         if a[key] != b[key]:
             return "{}: {!r} vs {!r}".format(key, a[key], b[key])
     return None
@@ -403,6 +411,8 @@ def main():
                 "branch_taken": first["branch_taken"],
                 "opt_branch": first["opt_branch"],
                 "ext_branch": first["ext_branch"],
+                "positioned_fingerprint": first["positioned_fingerprint"],
+                "extended_fingerprint": first["extended_fingerprint"],
                 "pin_tops": first["pin_tops"],
                 "grid_pts": first["grid_pts"],
             },
