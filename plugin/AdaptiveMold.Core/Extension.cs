@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Rhino.Geometry;
 using Rhino.Geometry.Intersect;
 
@@ -16,12 +17,32 @@ namespace AdaptiveMold.Core
         public const string BranchSurfaceExtend = "surface_extend";
         public const string BranchTangentFallback = "tangent_fallback";
 
+        /// <param name="messages">
+        /// 런타임 메시지를 받을 목록. null 이면 아무것도 하지 않는다 —
+        /// 파이썬의 <c>component=None</c> 과 같은 자리다.
+        /// </param>
         public static (Brep extended, string method, string branch) Run(
-            GeometryBase positionedSrf, double width, double length)
+            GeometryBase positionedSrf, double width, double length,
+            IList<MoldMessage> messages = null)
         {
+            // ToSurface 는 첫 face 만 쓰는데 조용히 나머지를 버린다. 파이썬도
+            // 여기(호출부가 아니라 extend_surface 안)에서 경고한다 — 위치를
+            // 옮기면 메시지 **순서**가 달라져 대조가 깨진다.
+            var brepIn = Validation.ToBrep(positionedSrf);
+            if (brepIn != null && brepIn.Faces.Count > 1)
+                Warn(messages,
+                    $"target_srf 의 face 가 {brepIn.Faces.Count} 개다. 곡면 확장(Phase C)은 첫 face "
+                    + "만 쓰므로 결과가 나머지 face 를 반영하지 않는다. 단일 face 로 "
+                    + "합치거나 face 마다 따로 돌릴 것.");
+
             var srf = Validation.ToSurface(positionedSrf);
             if (srf == null)
+            {
+                Warn(messages,
+                    "positioned_srf 에서 Surface 를 얻지 못해 곡면 확장을 "
+                    + "건너뛰었다. 몰드 밖 핀은 전부 접평면 외삽값이 된다.");
                 return (Validation.ToBrep(positionedSrf), MethodTangent, BranchNoSurface);
+            }
 
             double extensionLength = Math.Max(width, length) * 1.5;
 
@@ -38,7 +59,11 @@ namespace AdaptiveMold.Core
                 if (extended != null && !ReferenceEquals(extended, srf))
                 {
                     var b = extended.ToBrep();
-                    if (b != null) return (b, MethodSurface, BranchSurfaceExtend);
+                    if (b != null)
+                    {
+                        Remark(messages, "Phase C 확장 완료 — Surface.Extend 를 썼다.");
+                        return (b, MethodSurface, BranchSurfaceExtend);
+                    }
                 }
             }
             catch (Exception)
@@ -46,8 +71,18 @@ namespace AdaptiveMold.Core
                 // 파이썬이 통째로 삼킨다. 그대로 옮긴다.
             }
 
+            // Warning 이 아니라 Remark 다. 흔하게 뜨는 경고는 경고 무시를 학습시킨다.
+            Remark(messages,
+                "곡면 확장에 Surface.Extend 를 쓰지 못해 접평면 외삽으로 "
+                + "대체했다. 몰드 안쪽(extension_flags=False) 핀은 영향이 없다.");
             return (Validation.ToBrep(positionedSrf), MethodTangent, BranchTangentFallback);
         }
+
+        static void Warn(IList<MoldMessage> msgs, string text) =>
+            msgs?.Add(new MoldMessage(MoldMessageLevel.Warning, text));
+
+        static void Remark(IList<MoldMessage> msgs, string text) =>
+            msgs?.Add(new MoldMessage(MoldMessageLevel.Remark, text));
 
         static Surface TryExtend(Surface surface, IsoStatus iso, double length)
         {

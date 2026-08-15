@@ -32,9 +32,16 @@ namespace AdaptiveMold.Core
         public const string BranchDupFailed = "dup_failed";
         public const string BranchFull = "full";
 
+        /// <param name="messages">
+        /// 런타임 메시지를 받을 목록. null 이면 아무것도 하지 않는다 —
+        /// 파이썬의 <c>component=None</c> 과 같은 자리다. 메시지 문안은
+        /// 픽스처 <c>expected.messages</c> 의 대조 대상이므로 파이썬과
+        /// 한 글자도 달라지면 안 된다.
+        /// </param>
         public static (Brep positioned, string info, string branch) Run(
             GeometryBase targetSrf, IList<Point3d> gridPts, Plane basePlane,
-            double width, double length, double minHeight, double maxHeight)
+            double width, double length, double minHeight, double maxHeight,
+            IList<MoldMessage> messages = null)
         {
             var brep = Validation.ToBrep(targetSrf);
             if (brep == null)
@@ -49,6 +56,15 @@ namespace AdaptiveMold.Core
 
             if (valid.Count < 3)
             {
+                // width·length 는 파이썬이 {:g} 로 찍는다. C# 의 G 와 같은 결과가
+                // 나오는 범위(1e6 미만)에서만 같다 — 이 메시지는 T1~T9 이 태우지
+                // 않아 대조로 검증되지 않는다.
+                Warn(messages,
+                    $"곡면 위에 놓인 격자점이 {valid.Count}개다 (정렬에 최소 3개 필요). "
+                    + "Phase B 정렬을 건너뛰었고 모든 핀 높이가 외삽값이다. "
+                    + "base_plane 의 원점은 몰드의 모서리다 — 곡면이 "
+                    + $"X [0, {width:G}] · Y [0, {length:G}] 밖에 있는지 확인할 것.");
+
                 var pos = Validation.SafeDuplicate(brep);
                 if (valid.Count > 0)
                 {
@@ -122,8 +138,17 @@ namespace AdaptiveMold.Core
             double deltaZ = targetH - avgNew;
             positioned.Transform(Transform.Translation(basePlane.ZAxis * deltaZ));
 
-            return (positioned, $"tilt={tiltAngle:F1}deg, dz={deltaZ:F1}mm", BranchFull);
+            var optInfo = $"tilt={tiltAngle:F1}deg, dz={deltaZ:F1}mm";
+            Remark(messages, $"Phase B 정렬 완료 — {optInfo}.");
+
+            return (positioned, optInfo, BranchFull);
         }
+
+        static void Warn(IList<MoldMessage> msgs, string text) =>
+            msgs?.Add(new MoldMessage(MoldMessageLevel.Warning, text));
+
+        static void Remark(IList<MoldMessage> msgs, string text) =>
+            msgs?.Add(new MoldMessage(MoldMessageLevel.Remark, text));
 
         /// <summary>순차 누산. Sum()/Average() 로 바꾸지 말 것 — 순서가 값을 정한다.</summary>
         static double Mean(IList<double> xs)
