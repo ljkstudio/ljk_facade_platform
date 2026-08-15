@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- 단일 TFM. net8.0 은 구형 Rhino 8 에서 깨지고, net48 은 하위호환
+         AppDomain 경로라 신규 개발이 갈 이유가 없다 (지시서 §3.1). -->
+    <TargetFramework>net7.0-windows</TargetFramework>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <TargetExt>.gha</TargetExt>
+    <NoWarn>NU1701;NETSDK1086</NoWarn>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>AdaptiveMold.GH</RootNamespace>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- 어셈블리 버전이 패키지 버전의 정본이다. 매니페스트가 $version 으로
+         이것을 따라간다 (설계 §6.4).
+         주의: yak spec 은 패키지 '이름'을 여기가 아니라
+         GH_AssemblyInfo.Name 에서 유도한다 (J-015 TRAP-01). -->
+    <Version>0.1.0</Version>
+    <Title>LJKS AdaptiveMold</Title>
+    <Company>LJK STUDIO</Company>
+    <Description>곡면 패널용 가변형 핀 몰드(다점프레스)의 액추에이터 높이 역산기.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Grasshopper" Version="8.*" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AdaptiveMold.Core\AdaptiveMold.Core.csproj" />
+  </ItemGroup>
+
+</Project>

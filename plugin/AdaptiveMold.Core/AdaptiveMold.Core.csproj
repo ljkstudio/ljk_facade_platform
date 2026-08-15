@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net7.0-windows</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- 없으면 NuGet DLL 이 출력에 복사되지 않아 의존성 빠진 .gha 가 나온다 -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <RootNamespace>AdaptiveMold.Core</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Grasshopper 를 참조하지 않는다 (설계 §3.1). 넣는 순간 Core 가 GH 없이
+         못 돌게 되고 테스트가 GH 를 요구하게 된다.
+
+         ExcludeAssets=runtime : RhinoCommon 은 Rhino 가 이미 로드해 두었다.
+         출력에 복사하면 버전이 갈려 이상한 방식으로 깨진다. -->
+    <PackageReference Include="RhinoCommon" Version="8.*" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+</Project>

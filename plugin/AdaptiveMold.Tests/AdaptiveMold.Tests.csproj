@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net7.0-windows</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <IsPackable>false</IsPackable>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="NUnit" Version="4.2.2" />
+    <PackageReference Include="NUnit.Analyzers" Version="4.4.0" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AdaptiveMold.Core\AdaptiveMold.Core.csproj" />
+  </ItemGroup>
+
+  <!-- 계약 테스트가 Core 의 '프로젝트 파일'을 읽어야 한다. 컴파일된 어셈블리로는
+       검사할 수 없다 — 쓰지 않는 참조는 컴파일러가 매니페스트에서 지우므로
+       규약 위반이 있어도 없어도 똑같이 보인다. -->
+  <ItemGroup>
+    <AssemblyMetadata Include="CoreCsprojPath"
+                      Value="$(MSBuildThisFileDirectory)..\AdaptiveMold.Core\AdaptiveMold.Core.csproj" />
+  </ItemGroup>
+
+  <!-- 골든 픽스처를 출력 폴더로. 테스트가 TestContext.CurrentContext.TestDirectory
+       기준으로 fixtures/ 를 찾는다. -->
+  <ItemGroup>
+    <None Include="..\fixtures\*.json" Link="fixtures\%(Filename)%(Extension)">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>
