@@ -64,6 +64,26 @@ def main():
         print("       먼저 dotnet build 를 돌릴 것.")
         return 2
 
+    # 낡음 감지. 빌드가 실패해도 옛 DLL 이 남아 있으므로, 그것을 태우면
+    # **고치지도 않은 코드가 통과한다.** 실제로 한 번 당했다 —
+    # 빌드가 파일 잠금으로 깨졌는데 테스트는 옛 바이너리로 10/10 통과를 냈다.
+    stale = []
+    dll_mtime = os.path.getmtime(dll)
+    for root, _dirs, files in os.walk(TEST_PROJ):
+        if os.sep + "bin" in root or os.sep + "obj" in root:
+            continue
+        for fn in files:
+            if fn.endswith((".cs", ".csproj")):
+                p = os.path.join(root, fn)
+                if os.path.getmtime(p) > dll_mtime:
+                    stale.append(os.path.relpath(p, TEST_PROJ))
+    if stale:
+        print("[실패] 빌드가 소스보다 낡았다. 빌드가 실패했을 수 있다:")
+        for s in sorted(stale):
+            print("       " + s)
+        print("       dotnet build 를 먼저 성공시킬 것.")
+        return 2
+
     # Rhino 가 어셈블리를 LoadFrom 하면 파일을 잡고 놓지 않는다. 원본을 잡히면
     # 다음 빌드가 막히므로 **복사본을 태운다**. Rhino 를 껐다 켜지 않고
     # 고쳐-빌드-재실행을 반복할 수 있는 유일한 방법이다.
