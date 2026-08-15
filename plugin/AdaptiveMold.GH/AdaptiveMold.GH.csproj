@@ -36,4 +36,21 @@
     <ProjectReference Include="..\AdaptiveMold.Core\AdaptiveMold.Core.csproj" />
   </ItemGroup>
 
+  <!-- 툴팁 정본을 어셈블리에 굽는다. 파일로 두고 옆에서 읽으면 설치 폴더
+       구조에 의존하게 되고, 사용자가 지우면 툴팁이 통째로 사라진다.
+       LogicalName 을 고정하는 이유: 기본 이름은 폴더 구조에서 유도되므로
+       파일을 옮기면 조용히 못 찾는다.
+
+       WithCulture=false 가 없으면 안 된다. MSBuild 의 AssignCulture 가
+       **파일명의 `.ko.` 를 한국어 컬처로 읽고** 이 리소스를 본체가 아니라
+       `ko\AdaptiveMold.GH.resources.dll` 위성 어셈블리로 보낸다.
+       빌드는 경고 0 오류 0 으로 성공하고, csc 명령줄에도 /resource: 가
+       멀쩡히 보이며, 실패는 런타임에 GetManifestResourceStream 이 null 을
+       주는 것으로만 드러난다. 실측: 본체 10,240 B / 위성 49,152 B. -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\docs\params.ko.json"
+                      LogicalName="AdaptiveMold.GH.params.ko.json"
+                      WithCulture="false" />
+  </ItemGroup>
+
 </Project>
