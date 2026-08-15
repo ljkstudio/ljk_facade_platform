@@ -14,7 +14,26 @@
       "spacing": 200.0,
       "max_height": 400.0,
       "min_height": 0.0
-    }
+    },
+    "fingerprint": {
+      "bbox_min": [
+        100.0,
+        100.0,
+        -400.0
+      ],
+      "bbox_max": [
+        900.0,
+        900.0,
+        400.0
+      ],
+      "area": 2010619.299409,
+      "face_count": 1,
+      "degree_u": 2,
+      "degree_v": 2,
+      "cv_u": 9,
+      "cv_v": 5
+    },
+    "plane_fingerprint": null
   },
   "expected": {
     "pin_heights": [

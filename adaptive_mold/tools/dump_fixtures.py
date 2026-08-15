@@ -137,6 +137,52 @@ def build_plane(spec):
     raise ValueError("unknown plane kind: {}".format(spec.get("kind")))
 
 
+def _r3(v):
+    return [round(float(v.X), 6), round(float(v.Y), 6), round(float(v.Z), 6)]
+
+
+def geometry_fingerprint(geo):
+    """C#이 같은 스펙으로 같은 지오메트리를 만들었는지 볼 지문.
+
+    픽스처의 input.surface는 직렬화된 지오메트리가 아니라 **생성 스펙**이라,
+    C# 쪽이 build_surface를 재구현해야 한다. 거기서 어긋나면 Core가 옳아도
+    대조가 깨지고, 우연히 상쇄되면 틀린 채로 통과한다.
+    그래서 출력 대조보다 **입력 동일성 증명이 먼저**다.
+
+    값 자체에 의미는 없다. 양쪽이 같기만 하면 된다. 6자리로 반올림하는
+    이유: 최하위 비트 차이로 지문이 어긋나면 정작 보려던 것(스펙 해석이
+    다른가)을 못 본다.
+    """
+    brep = geo if isinstance(geo, rg.Brep) else geo.ToBrep()
+
+    bb = brep.GetBoundingBox(True)
+    amp = rg.AreaMassProperties.Compute(brep)
+    ns = brep.Faces[0].UnderlyingSurface().ToNurbsSurface()
+
+    return {
+        "bbox_min": _r3(bb.Min),
+        "bbox_max": _r3(bb.Max),
+        "area": round(float(amp.Area), 6) if amp else None,
+        "face_count": int(brep.Faces.Count),
+        "degree_u": int(ns.Degree(0)),
+        "degree_v": int(ns.Degree(1)),
+        "cv_u": int(ns.Points.CountU),
+        "cv_v": int(ns.Points.CountV),
+    }
+
+
+def plane_fingerprint(plane):
+    """base_plane은 지오메트리가 아니므로 따로 잰다. None이면 None."""
+    if plane is None:
+        return None
+    return {
+        "origin": _r3(plane.Origin),
+        "x_axis": _r3(plane.XAxis),
+        "y_axis": _r3(plane.YAxis),
+        "z_axis": _r3(plane.ZAxis),
+    }
+
+
 # ──────────────────────────────────────
 # 케이스 정의 — tests/test_integration.py의 T1~T8과 동일한 입력
 #
@@ -248,6 +294,11 @@ def run_case(case):
     surface = build_surface(case["surface"])
     base_plane = build_plane(case["base_plane"])
 
+    # 지문은 파이프라인에 넘기기 전에 잰다. 원본을 만지지 않는 읽기 연산이지만
+    # 순서를 고정해 두는 편이 나중에 의심할 거리를 줄인다.
+    fingerprint = geometry_fingerprint(surface)
+    plane_fp = plane_fingerprint(base_plane)
+
     r = run_adaptive_mold(
         surface,
         base_plane=base_plane,
@@ -267,6 +318,8 @@ def run_case(case):
         "pin_tops": [[float(p.X), float(p.Y), float(p.Z)] for p in r.pin_tops],
         "grid_pts": [[float(p.X), float(p.Y), float(p.Z)] for p in r.grid_pts],
         "info": r.info,
+        "fingerprint": fingerprint,
+        "plane_fingerprint": plane_fp,
     }
 
 
@@ -333,6 +386,9 @@ def main():
                 "surface": case["surface"],
                 "base_plane": case["base_plane"],
                 "params": dict(DEFAULT_PARAMS, **case["params"]),
+                # 지문은 입력의 성질이지 계산 결과가 아니므로 expected에 넣지 않는다.
+                "fingerprint": first["fingerprint"],
+                "plane_fingerprint": first["plane_fingerprint"],
             },
             "expected": {
                 "pin_heights": first["pin_heights"],
