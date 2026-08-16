@@ -35,7 +35,24 @@ namespace AdaptiveMold.GH
         public override Guid ComponentGuid =>
             new Guid("b4e07d92-1f38-4c6a-8e51-3a9c6d2b7f40");
 
-        protected override Bitmap Icon => null;   // Task 6
+        static Bitmap _icon;
+
+        protected override Bitmap Icon
+        {
+            get
+            {
+                if (_icon != null) return _icon;
+                using (var s = typeof(AMv1PinsComponent).Assembly
+                           .GetManifestResourceStream("AdaptiveMold.GH.icon24.png"))
+                {
+                    // 없으면 null 을 돌려준다 — 아이콘 때문에 컴포넌트가
+                    // 사라지게 두지 않는다. 빈 사각형이 낫다.
+                    if (s == null) return null;
+                    _icon = new Bitmap(s);
+                }
+                return _icon;
+            }
+        }
 
         public override GH_Exposure Exposure => GH_Exposure.primary;
 

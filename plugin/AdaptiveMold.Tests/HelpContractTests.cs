@@ -89,6 +89,22 @@ namespace AdaptiveMold.Tests
         }
 
         [Test]
+        public void Component_has_an_icon()
+        {
+            // 아이콘 리소스 이름은 csproj 의 LogicalName 에 달려 있어
+            // 파일을 옮기면 조용히 null 이 된다. 검사로 묶어 둔다.
+            var c = new AMv1PinsComponent();
+            var icon = typeof(AMv1PinsComponent)
+                .GetProperty("Icon", System.Reflection.BindingFlags.NonPublic
+                                   | System.Reflection.BindingFlags.Instance)
+                .GetValue(c) as System.Drawing.Bitmap;
+
+            Assert.That(icon, Is.Not.Null, "아이콘 리소스를 못 찾았다 — LogicalName 확인");
+            Assert.That(icon.Width, Is.EqualTo(24));
+            Assert.That(icon.Height, Is.EqualTo(24));
+        }
+
+        [Test]
         public void Component_description_carries_the_indexing_rule()
         {
             // 컴포넌트 설명 계층(설계 §4.2)에 반드시 있어야 하는 것.

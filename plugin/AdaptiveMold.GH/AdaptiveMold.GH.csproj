@@ -51,6 +51,8 @@
     <EmbeddedResource Include="..\..\docs\params.ko.json"
                       LogicalName="AdaptiveMold.GH.params.ko.json"
                       WithCulture="false" />
+    <EmbeddedResource Include="Resources\icon24.png"
+                      LogicalName="AdaptiveMold.GH.icon24.png" />
   </ItemGroup>
 
 </Project>

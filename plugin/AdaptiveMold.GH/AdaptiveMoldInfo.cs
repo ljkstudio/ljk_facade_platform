@@ -17,7 +17,17 @@ namespace AdaptiveMold.GH
         /// </summary>
         public override string Name => "LJKS AdaptiveMold";
 
-        public override Bitmap Icon => null;   // M3 에서 24x24 PNG
+        public override Bitmap Icon
+        {
+            get
+            {
+                using (var s = typeof(AdaptiveMoldInfo).Assembly
+                           .GetManifestResourceStream("AdaptiveMold.GH.icon24.png"))
+                {
+                    return s == null ? null : new Bitmap(s);
+                }
+            }
+        }
 
         public override string Description =>
             "곡면 패널용 가변형 핀 몰드(다점프레스)의 액추에이터 높이 역산기.";
