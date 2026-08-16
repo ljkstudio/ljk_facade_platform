@@ -36,6 +36,7 @@
   <ItemGroup>
     <AssemblyMetadata Include="CoreCsprojPath" Value="$(MSBuildThisFileDirectory)..\AdaptiveMold.Core\AdaptiveMold.Core.csproj" />
     <AssemblyMetadata Include="GhCsprojPath" Value="$(MSBuildThisFileDirectory)..\AdaptiveMold.GH\AdaptiveMold.GH.csproj" />
+    <AssemblyMetadata Include="ParamsJsonPath" Value="$(MSBuildThisFileDirectory)..\..\docs\params.ko.json" />
   </ItemGroup>
 
   <!-- 골든 픽스처를 출력 폴더로. 테스트가 TestContext.CurrentContext.TestDirectory

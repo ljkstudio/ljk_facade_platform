@@ -77,6 +77,7 @@ for nick in spec:
 
     changed = 0
     missing = []
+    undocumented = []
     for kind, params in (("inputs", target.Params.Input),
                          ("outputs", target.Params.Output)):
         want = docs.get(kind, {{}})
@@ -84,6 +85,8 @@ for nick in spec:
         for p in params:
             seen.append(p.NickName)
             if p.NickName not in want:
+                # 반대 방향. 이것을 안 보면 새 파라미터의 설명이 영원히 안 써진다.
+                undocumented.append("%s/%s" % (kind, p.NickName))
                 continue
             text = want[p.NickName]
             if p.Description == text:
@@ -98,6 +101,8 @@ for nick in spec:
     lines.append("%s: %s %d개" % (nick, "차이" if check_only else "적용", changed))
     if missing:
         lines.append("  설명은 있는데 파라미터가 없음: %s" % ", ".join(missing))
+    if undocumented:
+        lines.append("  파라미터는 있는데 설명이 없음: %s" % ", ".join(undocumented))
     if not check_only and changed:
         target.Params.OnParametersChanged()
         target.ExpireSolution(True)
