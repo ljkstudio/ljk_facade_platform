@@ -1,0 +1,23 @@
+{
+  "area_2d": 271198.389741624,
+  "area_3d": 271431.57789929706,
+  "bracket": {
+    "equal_area": 295.52020666133956,
+    "isometric": 300.0,
+    "orthographic": 282.3212366975177
+  },
+  "case": {
+    "R": 500.0,
+    "iters": 120,
+    "nr": 8,
+    "nt": 24,
+    "theta": 0.6
+  },
+  "converged": true,
+  "iterations": 7,
+  "max_forming_strain": 0.022529740796156217,
+  "outer_radius_mean": 295.49818313002817,
+  "sigma_max": 1.0478811494206137,
+  "sigma_min": 0.9779666645406184,
+  "wrinkle_face_count": 168
+}

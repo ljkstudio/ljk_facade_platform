@@ -63,3 +63,11 @@ plugin/**/bin-testhost/
 
 # 픽스처 불변 검사의 기준 사본 (재생성 가능, 로컬 전용)
 plugin/fixtures/_baseline/
+
+# SDD 작업공간 (git-ignored 스크래치)
+.superpowers/
+
+# Rhino 검사 로그 (매 실행마다 새로 쓴다)
+unfold/tests/rhino/_*_log.txt
+unfold/tests/rhino/_profile_cfg.txt
+unfold/grasshopper/_*_log.txt
